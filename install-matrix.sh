@@ -1,9 +1,10 @@
 #!/bin/bash
 
 # ============================================================
-#  MATRIX SERVER INSTALLER v3.1
+#  MATRIX SERVER INSTALLER v3.2
 #  by zxchubbabubba
-#  Ubuntu 20.04 / 22.04 / 24.04
+#  Поддерживает: Ubuntu 20.04 / 22.04 / 24.04
+#                Debian 11 / 12
 #  Меню: Matrix, MAS, LiveKit (с финальным выводом)
 # ============================================================
 
@@ -96,9 +97,26 @@ check_system() {
         log_error "lsb_release не найден. Только Ubuntu/Debian."
     fi
 
-    OS_VERSION=$(lsb_release -rs | cut -d. -f1)
-    [[ "$OS_VERSION" -lt 20 ]] && log_error "Требуется Ubuntu 20.04 или новее."
-    log_ok "ОС: Ubuntu $OS_VERSION"
+    DISTRO=$(lsb_release -is | tr '[:upper:]' '[:lower:]')
+    VERSION=$(lsb_release -rs | cut -d. -f1)
+
+    case "$DISTRO" in
+        ubuntu)
+            if [[ "$VERSION" -lt 20 ]]; then
+                log_error "Требуется Ubuntu 20.04 или новее."
+            fi
+            log_ok "ОС: Ubuntu $VERSION"
+            ;;
+        debian)
+            if [[ "$VERSION" -lt 11 ]]; then
+                log_error "Требуется Debian 11 (bullseye) или новее."
+            fi
+            log_ok "ОС: Debian $VERSION"
+            ;;
+        *)
+            log_error "Неподдерживаемый дистрибутив: $DISTRO. Используйте Ubuntu или Debian."
+            ;;
+    esac
 }
 
 # ════════════════════════════════════════
@@ -107,21 +125,42 @@ check_system() {
 install_base_packages() {
     log_step "Установка базовых пакетов"
 
+    # Обновляем список пакетов
     run_spinner "Обновление списка пакетов" \
         apt-get update -qq
 
-    run_spinner "Установка nginx, certbot, docker, ufw" \
+    # Устанавливаем необходимые зависимости (кроме Docker)
+    run_spinner "Установка nginx, certbot, ufw, git и пр." \
         apt-get install -y -qq \
-            apt-transport-https ca-certificates curl software-properties-common \
-            nginx certbot python3-certbot-nginx ufw git docker.io docker-compose-v2
+            apt-transport-https ca-certificates curl gnupg lsb-release \
+            software-properties-common nginx certbot python3-certbot-nginx \
+            ufw git
+
+    # Установка Docker из официального репозитория
+    log_step "Установка Docker (официальный репозиторий)"
+
+    # Добавляем ключ Docker
+    curl -fsSL "https://download.docker.com/linux/$DISTRO/gpg" | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+
+    # Добавляем репозиторий
+    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/$DISTRO $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+    # Обновляем список с Docker
+    run_spinner "Обновление списка пакетов (Docker)" \
+        apt-get update -qq
+
+    # Устанавливаем Docker и Compose Plugin
+    run_spinner "Установка docker-ce, docker-compose-plugin" \
+        apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin
 
     run_spinner "Запуск Docker" \
         bash -c "systemctl enable docker && systemctl start docker"
 
+    # Проверяем, что docker compose работает
     if ! docker compose version &>/dev/null; then
-        log_error "docker compose v2 не найден"
+        log_error "docker compose (плагин) не работает"
     fi
-    log_ok "Docker Compose готов"
+    log_ok "Docker и Compose готовы"
 }
 
 # ════════════════════════════════════════
@@ -1084,7 +1123,7 @@ show_menu() {
     echo -e "${YELLOW}       ╚══════╝╚══════╝╚═╝  ╚═╝  ╚═══╝  ╚══════╝╚═╝  ╚═╝${NC}"
     echo ""
     echo -e "${BRED}  ════════════════════════════════════════════════════════${NC}"
-    echo -e "     ${DIM}Ubuntu 20.04 · 22.04 · 24.04  ·  version 3.1${NC}"
+    echo -e "     ${DIM}Ubuntu 20.04+ · Debian 11+  ·  version 3.2${NC}"
     echo -e "${BRED}  ════════════════════════════════════════════════════════${NC}"
     echo ""
     echo -e "  ${WHITE}Выберите действие:${NC}"

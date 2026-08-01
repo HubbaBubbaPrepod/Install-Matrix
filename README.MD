@@ -1,121 +1,141 @@
-# Matrix Server Installer
+# Установщик Matrix Server
 
-This repository contains a Bash installer for setting up a self-hosted Matrix infrastructure on Ubuntu 20.04, 22.04, or 24.04.
+Этот репозиторий содержит Bash-скрипт для автоматической установки собственной (self-hosted) инфраструктуры Matrix на Ubuntu 20.04, 22.04 или 24.04.
 
-The script automates installation of:
+Скрипт автоматически устанавливает и настраивает:
 
-- Matrix Synapse
-- PostgreSQL
-- Coturn for STUN/TURN
-- Nginx reverse proxy
-- Let's Encrypt SSL certificates
-- optional Matrix Authentication Service (MAS)
-- optional LiveKit for voice/video calls
-- firewall configuration with UFW
+* Matrix Synapse
+* PostgreSQL
+* Coturn (STUN/TURN-сервер)
+* Nginx в качестве обратного прокси
+* SSL-сертификаты Let's Encrypt
+* Matrix Authentication Service (MAS) *(опционально)*
+* LiveKit для голосовых и видеозвонков *(опционально)*
+* настройку межсетевого экрана UFW
 
-## Repository contents
+## Содержимое репозитория
 
-- `install-matrix.sh` — interactive installation script
+* `install-matrix.sh` — интерактивный скрипт установки.
 
-## What the script does
+## Возможности скрипта
 
-The installer offers a menu with three installation paths:
+После запуска установщик предложит выбрать один из трёх вариантов установки.
 
-1. Install Matrix
-   - Synapse homeserver
-   - PostgreSQL database
-   - Coturn
-   - Nginx HTTPS proxy
-   - automatic TLS certificate via Certbot
-   - generated secrets and config in `/root/matrix-server`
+### 1. Установка Matrix
 
-2. Install MAS
-   - Matrix Authentication Service for login/auth flows
-   - requires an existing Matrix installation
-   - configures HTTPS for the MAS hostname
-   - integrates with Synapse
+Будут установлены и настроены:
 
-3. Install LiveKit
-   - WebRTC media service for Matrix voice/video calls
-   - requires Matrix and MAS
-   - configures reverse proxy and JWT service
-   - exposes `/lk-jwt` on the main Matrix domain
+* сервер Matrix Synapse;
+* база данных PostgreSQL;
+* сервер Coturn;
+* HTTPS-прокси на базе Nginx;
+* автоматическое получение SSL-сертификата через Certbot;
+* генерация всех необходимых секретов и конфигурационных файлов в каталоге `/root/matrix-server`.
 
-## Requirements
+### 2. Установка MAS
 
-Before running the installer, make sure:
+Будет установлен Matrix Authentication Service для современной системы аутентификации пользователей.
 
-- You are running Ubuntu 20.04+ on a fresh or managed server
-- You have root access
-- Your Matrix domain is configured in DNS and resolves to the server IP
-- Ports 80, 443, 8448, 8008, 3478, 5349, and the RTP range are allowed
-- A valid domain for the Matrix server is available
+Особенности:
 
-Example:
+* требует уже установленный Matrix Server;
+* автоматически настраивает HTTPS для домена MAS;
+* интегрируется с Synapse.
 
-- Matrix: `matrix.example.com`
-- MAS: `mas.example.com` (optional)
-- LiveKit: `livekit.example.com` (optional)
+### 3. Установка LiveKit
+
+Будет установлен LiveKit — медиа-сервер WebRTC для голосовых и видеозвонков Matrix.
+
+Особенности:
+
+* требует установленный Matrix Server и MAS;
+* автоматически настраивает обратный прокси;
+* создает JWT-сервис;
+* добавляет маршрут `/lk-jwt` на основном домене Matrix.
+
+## Требования
+
+Перед запуском убедитесь, что:
+
+* используется Ubuntu 20.04, 22.04 или 24.04;
+* имеется доступ пользователя `root`;
+* домен Matrix уже настроен в DNS и указывает на IP-адрес сервера;
+* открыты порты `80`, `443`, `8448`, `8008`, `3478`, `5349`, а также диапазон RTP-портов;
+* имеется зарегистрированный домен для Matrix.
+
+Пример доменов:
+
+* Matrix — `matrix.example.com`
+* MAS — `mas.example.com` *(необязательно)*
+* LiveKit — `livekit.example.com` *(необязательно)*
 
 ## Установка
 
-Ссылка на проект: [HubbaBubbaPrepod/Install-Matrix](https://github.com/HubbaBubbaPrepod/Install-Matrix)
+Репозиторий проекта:
 
-Самый быстрый способ установки:
+https://github.com/HubbaBubbaPrepod/Install-Matrix
+
+### Быстрая установка
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/HubbaBubbaPrepod/Install-Matrix/refs/heads/main/install-matrix.sh)
 ```
 
-Или скачать и запустить вручную:
+### Скачать и запустить вручную
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/HubbaBubbaPrepod/Install-Matrix/refs/heads/main/install-matrix.sh -o install-matrix.sh && chmod +x install-matrix.sh && sudo bash ./install-matrix.sh
 ```
 
-Если вы запускаете скрипт локально из этого репозитория, используйте:
+### Запуск локальной копии
+
+Если репозиторий уже скачан:
 
 ```bash
 chmod +x install-matrix.sh
 sudo ./install-matrix.sh
 ```
 
-Then choose from the menu:
+После запуска выберите необходимый пункт меню:
 
-- `1` — Install Matrix
-- `2` — Install MAS
-- `3` — Install LiveKit
-- `0` — Exit
+* `1` — Установить Matrix
+* `2` — Установить MAS
+* `3` — Установить LiveKit
+* `0` — Выход
 
-## Installation flow
+## Этапы установки
 
-### 1) Matrix
+### 1. Matrix
 
-The Matrix setup will:
+Во время установки Matrix выполняются следующие действия:
 
-- update OS packages
-- install Docker and Compose
-- configure Nginx
-- request an SSL certificate with Certbot
-- create directories under `/root/matrix-server`
-- generate `docker-compose.yml` and `homeserver.yaml`
-- start Synapse and Coturn containers
-- create the first admin user via `register_new_matrix_user`
-- save credentials to `/root/matrix-server/credentials.txt`
+* обновление пакетов операционной системы;
+* установка Docker и Docker Compose;
+* настройка Nginx;
+* получение SSL-сертификата Let's Encrypt через Certbot;
+* создание структуры каталогов в `/root/matrix-server`;
+* генерация файлов `docker-compose.yml` и `homeserver.yaml`;
+* запуск контейнеров Synapse и Coturn;
+* создание первого администратора с помощью `register_new_matrix_user`;
+* сохранение учетных данных в `/root/matrix-server/credentials.txt`.
 
-### 2) MAS
+### 2. MAS
 
-This step adds the Matrix Authentication Service. It creates a MAS config and configures a separate Nginx site for the MAS hostname.
+На этом этапе устанавливается Matrix Authentication Service.
 
-### 3) LiveKit
+Скрипт:
 
-This step configures the LiveKit signaling/media stack and adds the `/lk-jwt` proxy route to the main Matrix site.
+* создает конфигурацию MAS;
+* настраивает отдельный сайт Nginx для домена MAS;
+* интегрирует MAS с Synapse.
 
-## Generated directories and files
+### 3. LiveKit
 
-The installer writes the stack to `/root/matrix-server`.
+На данном этапе настраивается стек LiveKit для обработки WebRTC-соединений, а также добавляется проксирование маршрута `/lk-jwt` на основном сайте Matrix.
 
-Typical structure:
+## Создаваемые каталоги и файлы
+
+Все файлы размещаются в каталоге:
 
 ```text
 /root/matrix-server/
@@ -130,17 +150,17 @@ Typical structure:
 │   └── livekit/
 ```
 
-## Important notes
+## Важные замечания
 
-- The script expects the server to be publicly accessible on the configured domains.
-- Certificates are obtained automatically with Let's Encrypt.
-- Secrets are generated automatically and stored in `.env` and related config files.
-- The script is designed for server-side installation and is not intended for local desktop testing.
-- For production, review generated config files and secrets before exposing the service publicly.
+* Сервер должен быть доступен из сети Интернет по указанным доменным именам.
+* SSL-сертификаты Let's Encrypt получаются автоматически.
+* Все необходимые секреты создаются автоматически и сохраняются в файле `.env` и других конфигурационных файлах.
+* Скрипт предназначен для установки на сервер и не рассчитан на использование на локальном рабочем компьютере.
+* Перед использованием в рабочей среде рекомендуется проверить все сгенерированные конфигурационные файлы и секреты.
 
-## Useful commands
+## Полезные команды
 
-From the Matrix install directory:
+Перейдите в каталог установки Matrix:
 
 ```bash
 cd /root/matrix-server
@@ -149,24 +169,24 @@ sudo docker compose logs -f
 sudo docker compose restart
 ```
 
-Check Synapse availability:
+Проверка доступности Synapse:
 
 ```bash
 curl https://matrix.example.com/_matrix/client/versions
 ```
 
-## Security recommendations
+## Рекомендации по безопасности
 
-- Keep your server patched and updated.
-- Restrict SSH access with UFW or another firewall rule set.
-- Do not expose admin credentials in public repositories.
-- Rotate generated secrets if they are ever shared or leaked.
-- Review the generated Nginx and Synapse configuration before production deployment.
+* Регулярно обновляйте операционную систему и установленное программное обеспечение.
+* Ограничьте доступ по SSH с помощью UFW или другого межсетевого экрана.
+* Не публикуйте учетные данные администратора в открытых репозиториях.
+* При утечке конфигурационных файлов или секретов немедленно сгенерируйте новые.
+* Перед запуском в рабочей среде внимательно проверьте конфигурацию Nginx и Synapse.
 
-## Disclaimer
+## Отказ от ответственности
 
-This project is intended for self-hosted infrastructure and automation. Use it responsibly and ensure the server meets your compliance and operational requirements.
+Проект предназначен для автоматизации развертывания собственной инфраструктуры Matrix. Используйте его ответственно и убедитесь, что сервер соответствует требованиям безопасности, эксплуатации и нормативным требованиям вашей организации.
 
-## License
+## Лицензия
 
-This repository does not include an explicit license file. Treat the contents as project-local code for deployment and administration unless otherwise stated by the repository owner.
+В репозитории отсутствует файл лицензии. Если владелец проекта не указал иное, содержимое репозитория следует рассматривать как код, предназначенный исключительно для развертывания и администрирования инфраструктуры.
