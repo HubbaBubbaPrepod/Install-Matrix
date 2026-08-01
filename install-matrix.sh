@@ -1,10 +1,10 @@
 #!/bin/bash
 
 # ============================================================
-#  MATRIX SERVER INSTALLER v3.3
+#  MATRIX SERVER INSTALLER v3.1
 #  by zxchubbabubba
 #  Ubuntu 20.04 / 22.04 / 24.04
-#  Меню: Matrix, MAS, LiveKit (исправлены отступы YAML v2)
+#  Меню: Matrix, MAS, LiveKit (с исправлением Nginx)
 # ============================================================
 
 set -e
@@ -125,7 +125,7 @@ install_base_packages() {
 }
 
 # ════════════════════════════════════════
-#  ПОЛУЧЕНИЕ SSL СЕРТИФИКАТА
+#  ПОЛУЧЕНИЕ SSL СЕРТИФИКАТА (исправлено)
 # ════════════════════════════════════════
 get_ssl_cert() {
     local domain="$1"
@@ -141,6 +141,7 @@ get_ssl_cert() {
         -in "/etc/letsencrypt/live/$domain/fullchain.pem" 2>/dev/null | cut -d= -f2)
     log_ok "Сертификат получен, действует до: ${CYAN}$CERT_EXPIRY${NC}"
 
+    # Запускаем nginx обратно, чтобы он был доступен для дальнейших операций
     systemctl start nginx
 }
 
@@ -642,17 +643,19 @@ CREDS
 }
 
 # ════════════════════════════════════════
-#  УСТАНОВКА MAS (пункт 2) — ИСПРАВЛЕННЫЙ YAML
+#  УСТАНОВКА MAS (пункт 2)
 # ════════════════════════════════════════
 install_mas() {
     log_step "Установка Matrix Authentication Service (MAS)"
 
+    # Проверяем, что Matrix уже установлен
     if [[ ! -f "$ENV_FILE" ]]; then
         log_error "Файл .env не найден. Сначала установите Matrix (пункт 1)."
     fi
 
     load_env
 
+    # Запрос домена для MAS
     echo ""
     echo -e "  ${DIM}Домен для MAS (например, mas.$DOMAIN)${NC}"
     echo -ne "  ${CYAN}▶${NC}  "
@@ -665,17 +668,23 @@ install_mas() {
         log_ok "Домен MAS: ${CYAN}$MAS_DOMAIN${NC}"
     fi
 
+    # Генерация секрета для связи с Synapse
     MAS_SECRET=$(generate_secret 32)
     log_ok "Секрет для MAS сгенерирован"
 
+    # Генерация ключей для MAS (encryption и подписи)
     ENCRYPTION_SECRET=$(openssl rand -hex 32)
+    # Генерируем RSA ключ
     RSA_KEY=$(openssl genrsa 2048 2>/dev/null)
+    # Генерируем EC ключи
     EC_KEY1=$(openssl ecparam -name prime256v1 -genkey -noout 2>/dev/null)
     EC_KEY2=$(openssl ecparam -name prime256v1 -genkey -noout 2>/dev/null)
     EC_KEY3=$(openssl ecparam -name prime256v1 -genkey -noout 2>/dev/null)
 
+    # Сохраняем в .env
     save_env
 
+    # Создаём каталог для конфига MAS
     mkdir -p "$MATRIX_DIR/data/mas"
     cat > "$MATRIX_DIR/data/mas/config.yaml" <<EOF
 http:
@@ -722,13 +731,13 @@ secrets:
   encryption: $ENCRYPTION_SECRET
   keys:
   - key: |
-      $RSA_KEY
+$(echo "$RSA_KEY" | sed 's/^/      /')
   - key: |
-      $EC_KEY1
+$(echo "$EC_KEY1" | sed 's/^/      /')
   - key: |
-      $EC_KEY2
+$(echo "$EC_KEY2" | sed 's/^/      /')
   - key: |
-      $EC_KEY3
+$(echo "$EC_KEY3" | sed 's/^/      /')
 passwords:
   enabled: true
   schemes:
@@ -750,16 +759,13 @@ registration:
 account:
   password_registration_enabled: true
   password_registration_email_required: false
-registration:
-  enabled: true
-  allow_username: true
-  allow_email: false
-  allow_guest: false
 EOF
     log_ok "Конфиг MAS создан"
 
+    # Получение SSL для MAS
     get_ssl_cert "$MAS_DOMAIN"
 
+    # Настройка Nginx для MAS
     NGINX_MAS_CONF="/etc/nginx/sites-available/mas-${MAS_DOMAIN}.conf"
     cat > "$NGINX_MAS_CONF" <<EOF
 server {
@@ -797,10 +803,12 @@ EOF
     systemctl reload nginx
     log_ok "Nginx для MAS настроен"
 
+    # Перегенерируем compose и homeserver с включенным MAS
     cd "$MATRIX_DIR"
     generate_compose true false
     generate_homeserver true false
 
+    # Перезапуск сервисов
     log_step "Перезапуск сервисов с MAS"
     run_spinner "Запуск обновлённого стека" \
         docker compose up -d
@@ -814,16 +822,19 @@ EOF
 install_livekit() {
     log_step "Установка LiveKit (звонки)"
 
+    # Проверяем наличие Matrix и MAS
     if [[ ! -f "$ENV_FILE" ]]; then
         log_error "Файл .env не найден. Сначала установите Matrix (пункт 1)."
     fi
 
     load_env
 
+    # Проверяем, что MAS установлен (по наличию переменной MAS_DOMAIN)
     if [[ -z "$MAS_DOMAIN" ]]; then
         log_error "MAS не установлен. Сначала установите MAS (пункт 2)."
     fi
 
+    # Запрос домена для LiveKit
     echo ""
     echo -e "  ${DIM}Домен для LiveKit (например, livekit.$DOMAIN)${NC}"
     echo -ne "  ${CYAN}▶${NC}  "
@@ -836,12 +847,15 @@ install_livekit() {
         log_ok "Домен LiveKit: ${CYAN}$LIVEKIT_DOMAIN${NC}"
     fi
 
+    # Генерация ключей LiveKit
     LIVEKIT_KEY=$(generate_secret 64)
     LIVEKIT_SECRET=$(generate_secret 64)
     log_ok "Ключи LiveKit сгенерированы"
 
+    # Сохраняем в .env
     save_env
 
+    # Создаём каталог для конфига LiveKit
     mkdir -p "$MATRIX_DIR/data/livekit"
     cat > "$MATRIX_DIR/data/livekit/livekit.yaml" <<EOF
 port: 7880
@@ -858,8 +872,10 @@ logging:
 EOF
     log_ok "Конфиг LiveKit создан"
 
+    # Получение SSL для LiveKit
     get_ssl_cert "$LIVEKIT_DOMAIN"
 
+    # Настройка Nginx для LiveKit
     NGINX_LIVEKIT_CONF="/etc/nginx/sites-available/livekit-${LIVEKIT_DOMAIN}.conf"
     cat > "$NGINX_LIVEKIT_CONF" <<EOF
 server {
@@ -898,18 +914,23 @@ EOF
     systemctl reload nginx
     log_ok "Nginx для LiveKit настроен"
 
+    # Открываем порты для LiveKit (UDP для медиа, TCP для WebSocket)
     log_step "Открытие портов для LiveKit"
     for rule in "7880/tcp" "7881/tcp" "50000:50100/udp"; do
         ufw allow "$rule" >/dev/null 2>&1
     done
     log_ok "Открыты порты 7880, 7881, 50000-50100"
 
+    # Перегенерируем compose и homeserver с включенным LiveKit
     cd "$MATRIX_DIR"
     generate_compose true true
     generate_homeserver true true
 
+    # Добавляем location /lk-jwt на основном домене для lk-jwt-service
+    # Проверим, не добавлен ли уже
     MAIN_NGINX="/etc/nginx/sites-available/matrix-${DOMAIN}.conf"
     if ! grep -q "location /lk-jwt" "$MAIN_NGINX"; then
+        # Вставляем location перед последней строкой ssl_certificate
         sed -i '/ssl_certificate/i \ \n    location /lk-jwt {\n        proxy_pass http://127.0.0.1:8082;\n        proxy_http_version 1.1;\n        proxy_set_header Host \$host;\n        proxy_set_header X-Real-IP \$remote_addr;\n        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto \$scheme;\n        proxy_set_header Upgrade \$http_upgrade;\n        proxy_set_header Connection "upgrade";\n        proxy_buffering off;\n    }\n' "$MAIN_NGINX"
         nginx -t >/dev/null 2>&1 || log_error "Ошибка добавления /lk-jwt в Nginx"
         systemctl reload nginx
@@ -918,6 +939,7 @@ EOF
         log_ok "/lk-jwt уже существует"
     fi
 
+    # Перезапуск сервисов
     log_step "Перезапуск сервисов с LiveKit"
     run_spinner "Запуск обновлённого стека" \
         docker compose up -d
@@ -957,7 +979,7 @@ show_menu() {
     echo -e "${YELLOW}       ╚══════╝╚══════╝╚═╝  ╚═╝  ╚═══╝  ╚══════╝╚═╝  ╚═╝${NC}"
     echo ""
     echo -e "${BRED}  ════════════════════════════════════════════════════════${NC}"
-    echo -e "     ${DIM}Ubuntu 20.04 · 22.04 · 24.04  ·  version 3.3${NC}"
+    echo -e "     ${DIM}Ubuntu 20.04 · 22.04 · 24.04  ·  version 3.1${NC}"
     echo -e "${BRED}  ════════════════════════════════════════════════════════${NC}"
     echo ""
     echo -e "  ${WHITE}Выберите действие:${NC}"
