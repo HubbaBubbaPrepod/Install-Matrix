@@ -1,10 +1,10 @@
 #!/bin/bash
 
 # ============================================================
-#  MATRIX SERVER INSTALLER v3.2
+#  MATRIX SERVER INSTALLER v3.3
 #  by zxchubbabubba
 #  Ubuntu 20.04 / 22.04 / 24.04
-#  Меню: Matrix, MAS, LiveKit (исправлены отступы YAML)
+#  Меню: Matrix, MAS, LiveKit (исправлены отступы YAML v2)
 # ============================================================
 
 set -e
@@ -125,7 +125,7 @@ install_base_packages() {
 }
 
 # ════════════════════════════════════════
-#  ПОЛУЧЕНИЕ SSL СЕРТИФИКАТА (исправлено)
+#  ПОЛУЧЕНИЕ SSL СЕРТИФИКАТА
 # ════════════════════════════════════════
 get_ssl_cert() {
     local domain="$1"
@@ -642,7 +642,7 @@ CREDS
 }
 
 # ════════════════════════════════════════
-#  УСТАНОВКА MAS (пункт 2) — ИСПРАВЛЕНЫ ОТСТУПЫ
+#  УСТАНОВКА MAS (пункт 2) — ИСПРАВЛЕННЫЙ YAML
 # ════════════════════════════════════════
 install_mas() {
     log_step "Установка Matrix Authentication Service (MAS)"
@@ -680,31 +680,31 @@ install_mas() {
     cat > "$MATRIX_DIR/data/mas/config.yaml" <<EOF
 http:
   listeners:
-    - name: web
-      resources:
-        - name: discovery
-        - name: human
-        - name: oauth
-        - name: compat
-        - name: graphql
-        - name: assets
-      binds:
-        - address: '[::]:8080'
-      proxy_protocol: false
-    - name: internal
-      resources:
-        - name: health
-      binds:
-        - host: localhost
-          port: 8081
-      proxy_protocol: false
+  - name: web
+    resources:
+    - name: discovery
+    - name: human
+    - name: oauth
+    - name: compat
+    - name: graphql
+    - name: assets
+    binds:
+    - address: '[::]:8080'
+    proxy_protocol: false
+  - name: internal
+    resources:
+    - name: health
+    binds:
+    - host: localhost
+      port: 8081
+    proxy_protocol: false
   trusted_proxies:
-    - 192.168.0.0/16
-    - 172.16.0.0/12
-    - 10.0.0.0/10
-    - 127.0.0.1/8
-    - fd00::/8
-    - ::1/128
+  - 192.168.0.0/16
+  - 172.16.0.0/12
+  - 10.0.0.0/10
+  - 127.0.0.1/8
+  - fd00::/8
+  - ::1/128
   public_base: https://$MAS_DOMAIN/
   issuer: https://$MAS_DOMAIN/
 database:
@@ -721,21 +721,21 @@ email:
 secrets:
   encryption: $ENCRYPTION_SECRET
   keys:
-    - key: |
-        $RSA_KEY
-    - key: |
-        $EC_KEY1
-    - key: |
-        $EC_KEY2
-    - key: |
-        $EC_KEY3
+  - key: |
+      $RSA_KEY
+  - key: |
+      $EC_KEY1
+  - key: |
+      $EC_KEY2
+  - key: |
+      $EC_KEY3
 passwords:
   enabled: true
   schemes:
-    - version: 1
-      algorithm: bcrypt
-    - version: 2
-      algorithm: argon2id
+  - version: 1
+    algorithm: bcrypt
+  - version: 2
+    algorithm: argon2id
   minimum_complexity: 3
 matrix:
   kind: synapse
@@ -750,7 +750,11 @@ registration:
 account:
   password_registration_enabled: true
   password_registration_email_required: false
-# registration уже описан выше, убираем дублирование
+registration:
+  enabled: true
+  allow_username: true
+  allow_email: false
+  allow_guest: false
 EOF
     log_ok "Конфиг MAS создан"
 
@@ -953,7 +957,7 @@ show_menu() {
     echo -e "${YELLOW}       ╚══════╝╚══════╝╚═╝  ╚═╝  ╚═══╝  ╚══════╝╚═╝  ╚═╝${NC}"
     echo ""
     echo -e "${BRED}  ════════════════════════════════════════════════════════${NC}"
-    echo -e "     ${DIM}Ubuntu 20.04 · 22.04 · 24.04  ·  version 3.2${NC}"
+    echo -e "     ${DIM}Ubuntu 20.04 · 22.04 · 24.04  ·  version 3.3${NC}"
     echo -e "${BRED}  ════════════════════════════════════════════════════════${NC}"
     echo ""
     echo -e "  ${WHITE}Выберите действие:${NC}"
