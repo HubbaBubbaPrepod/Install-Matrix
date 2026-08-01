@@ -4,7 +4,7 @@
 #  MATRIX SERVER INSTALLER v3.1
 #  by zxchubbabubba
 #  Ubuntu 20.04 / 22.04 / 24.04
-#  Меню: Matrix, MAS, LiveKit (с исправлением Nginx)
+#  Меню: Matrix, MAS, LiveKit (с финальным выводом)
 # ============================================================
 
 set -e
@@ -125,7 +125,7 @@ install_base_packages() {
 }
 
 # ════════════════════════════════════════
-#  ПОЛУЧЕНИЕ SSL СЕРТИФИКАТА (исправлено)
+#  ПОЛУЧЕНИЕ SSL СЕРТИФИКАТА
 # ════════════════════════════════════════
 get_ssl_cert() {
     local domain="$1"
@@ -141,7 +141,6 @@ get_ssl_cert() {
         -in "/etc/letsencrypt/live/$domain/fullchain.pem" 2>/dev/null | cut -d= -f2)
     log_ok "Сертификат получен, действует до: ${CYAN}$CERT_EXPIRY${NC}"
 
-    # Запускаем nginx обратно, чтобы он был доступен для дальнейших операций
     systemctl start nginx
 }
 
@@ -618,7 +617,7 @@ CREDS
     echo ""
     echo -e "${BGREEN}  ╔══════════════════════════════════════════════════════════════════════════════════════════════════╗${NC}"
     echo -e "${BGREEN}  ║                                                                                                  ║${NC}"
-    echo -e "${BGREEN}  ║                                 УСТАНОВКА MATRIX ЗАВЕРШЕНА!                                     ║${NC}"
+    echo -e "${BGREEN}  ║                                 УСТАНОВКА MATRIX ЗАВЕРШЕНА!                                      ║${NC}"
     echo -e "${BGREEN}  ║                                                                                                  ║${NC}"
     echo -e "${BGREEN}  ╠══════════════════════════════════════════════════════════════════════════════════════════════════╣${NC}"
     echo -e "${BGREEN}  ║                                                                                                  ║${NC}"
@@ -674,9 +673,7 @@ install_mas() {
 
     # Генерация ключей для MAS (encryption и подписи)
     ENCRYPTION_SECRET=$(openssl rand -hex 32)
-    # Генерируем RSA ключ
     RSA_KEY=$(openssl genrsa 2048 2>/dev/null)
-    # Генерируем EC ключи
     EC_KEY1=$(openssl ecparam -name prime256v1 -genkey -noout 2>/dev/null)
     EC_KEY2=$(openssl ecparam -name prime256v1 -genkey -noout 2>/dev/null)
     EC_KEY3=$(openssl ecparam -name prime256v1 -genkey -noout 2>/dev/null)
@@ -813,7 +810,53 @@ EOF
     run_spinner "Запуск обновлённого стека" \
         docker compose up -d
 
-    log_ok "MAS установлен и интегрирован"
+    # Дописываем данные в credentials.txt
+    CREDS_FILE="$MATRIX_DIR/credentials.txt"
+    if [[ -f "$CREDS_FILE" ]]; then
+        cat >> "$CREDS_FILE" <<CREDS
+
+MAS (Matrix Authentication Service)
+====================================
+MAS Domain:  https://$MAS_DOMAIN
+MAS Secret:  $MAS_SECRET
+CREDS
+    else
+        cat > "$CREDS_FILE" <<CREDS
+Matrix Server — Credentials (дополнено MAS)
+===========================================
+Date:        $(date)
+MAS Domain:  https://$MAS_DOMAIN
+MAS Secret:  $MAS_SECRET
+CREDS
+    fi
+    chmod 600 "$CREDS_FILE"
+
+    # Финальный вывод
+    echo ""
+    echo ""
+    echo -e "${BGREEN}  ╔══════════════════════════════════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BGREEN}  ║                                                                                                  ║${NC}"
+    echo -e "${BGREEN}  ║                              УСТАНОВКА MAS ЗАВЕРШЕНА!                                           ║${NC}"
+    echo -e "${BGREEN}  ║                                                                                                  ║${NC}"
+    echo -e "${BGREEN}  ╠══════════════════════════════════════════════════════════════════════════════════════════════════╣${NC}"
+    echo -e "${BGREEN}  ║                                                                                                  ║${NC}"
+    echo -e "${BGREEN}  ║${NC}  ${WHITE}MAS URL:${NC}       ${CYAN}https://$MAS_DOMAIN${NC}                                ║${NC}"
+    echo -e "${BGREEN}  ║${NC}  ${WHITE}Интеграция:${NC}    ${GREEN}активна (с Synapse)${NC}                              ║${NC}"
+    echo -e "${BGREEN}  ║                                                                                                  ║${NC}"
+    echo -e "${BGREEN}  ║${NC}  ${YELLOW}Секрет MAS:${NC}   ${WHITE}$MAS_SECRET                                           ║${NC}"
+    echo -e "${BGREEN}  ║                                                                                                  ║${NC}"
+    echo -e "${BGREEN}  ╠══════════════════════════════════════════════════════════════════════════════════════════════════╣${NC}"
+    echo -e "${BGREEN}  ║                                                                                                  ║${NC}"
+    echo -e "${BGREEN}  ║${NC}  ${DIM}Логи:${NC}     ${CYAN}docker compose logs -f mas                                     ║${NC}"
+    echo -e "${BGREEN}  ║${NC}  ${DIM}Статус:${NC}   ${CYAN}docker compose ps                                             ║${NC}"
+    echo -e "${BGREEN}  ║${NC}                                                                                             ║${NC}"
+    echo -e "${BGREEN}  ║${NC}  ${DIM}Учётные данные дополнены в:                                                          ║${NC}"
+    echo -e "${BGREEN}  ║${NC}  ${CYAN}$CREDS_FILE                                                                         ║${NC}"
+    echo -e "${BGREEN}  ║                                                                                                  ║${NC}"
+    echo -e "${BGREEN}  ╚══════════════════════════════════════════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "               ${PURPLE}◆${NC}  ${DIM}made by${NC}  ${BPURPLE}zxchubbabubba${NC}  ${PURPLE}◆${NC}"
+    echo ""
 }
 
 # ════════════════════════════════════════
@@ -914,7 +957,7 @@ EOF
     systemctl reload nginx
     log_ok "Nginx для LiveKit настроен"
 
-    # Открываем порты для LiveKit (UDP для медиа, TCP для WebSocket)
+    # Открываем порты для LiveKit
     log_step "Открытие портов для LiveKit"
     for rule in "7880/tcp" "7881/tcp" "50000:50100/udp"; do
         ufw allow "$rule" >/dev/null 2>&1
@@ -926,13 +969,26 @@ EOF
     generate_compose true true
     generate_homeserver true true
 
-    # Добавляем location /lk-jwt на основном домене для lk-jwt-service
-    # Проверим, не добавлен ли уже
+    # Добавляем /lk-jwt через отдельный файл-включение
+    SNIPPET_FILE="/etc/nginx/snippets/lk-jwt-${DOMAIN}.conf"
+    cat > "$SNIPPET_FILE" <<EOF
+location /lk-jwt {
+    proxy_pass http://127.0.0.1:8082;
+    proxy_http_version 1.1;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+    proxy_set_header Upgrade \$http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_buffering off;
+}
+EOF
+
     MAIN_NGINX="/etc/nginx/sites-available/matrix-${DOMAIN}.conf"
-    if ! grep -q "location /lk-jwt" "$MAIN_NGINX"; then
-        # Вставляем location перед последней строкой ssl_certificate
-        sed -i '/ssl_certificate/i \ \n    location /lk-jwt {\n        proxy_pass http://127.0.0.1:8082;\n        proxy_http_version 1.1;\n        proxy_set_header Host \$host;\n        proxy_set_header X-Real-IP \$remote_addr;\n        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;\n        proxy_set_header X-Forwarded-Proto \$scheme;\n        proxy_set_header Upgrade \$http_upgrade;\n        proxy_set_header Connection "upgrade";\n        proxy_buffering off;\n    }\n' "$MAIN_NGINX"
-        nginx -t >/dev/null 2>&1 || log_error "Ошибка добавления /lk-jwt в Nginx"
+    if ! grep -q "include $SNIPPET_FILE" "$MAIN_NGINX"; then
+        sed -i "/server_name $DOMAIN;/a \    include $SNIPPET_FILE;" "$MAIN_NGINX"
+        nginx -t >/dev/null 2>&1 || log_error "Ошибка добавления include для /lk-jwt в Nginx"
         systemctl reload nginx
         log_ok "Добавлен прокси /lk-jwt на основной домен"
     else
@@ -944,7 +1000,56 @@ EOF
     run_spinner "Запуск обновлённого стека" \
         docker compose up -d
 
-    log_ok "LiveKit установлен и интегрирован"
+    # Дописываем данные в credentials.txt
+    CREDS_FILE="$MATRIX_DIR/credentials.txt"
+    if [[ -f "$CREDS_FILE" ]]; then
+        cat >> "$CREDS_FILE" <<CREDS
+
+LiveKit (звонки)
+=================
+LiveKit Domain:  wss://$LIVEKIT_DOMAIN
+API Key:         $LIVEKIT_KEY
+API Secret:      $LIVEKIT_SECRET
+CREDS
+    else
+        cat > "$CREDS_FILE" <<CREDS
+Matrix Server — Credentials (дополнено LiveKit)
+===============================================
+Date:           $(date)
+LiveKit Domain: wss://$LIVEKIT_DOMAIN
+API Key:        $LIVEKIT_KEY
+API Secret:     $LIVEKIT_SECRET
+CREDS
+    fi
+    chmod 600 "$CREDS_FILE"
+
+    # Финальный вывод
+    echo ""
+    echo ""
+    echo -e "${BGREEN}  ╔══════════════════════════════════════════════════════════════════════════════════════════════════╗${NC}"
+    echo -e "${BGREEN}  ║                                                                                                  ║${NC}"
+    echo -e "${BGREEN}  ║                             УСТАНОВКА LIVEKIT ЗАВЕРШЕНА!                                        ║${NC}"
+    echo -e "${BGREEN}  ║                                                                                                  ║${NC}"
+    echo -e "${BGREEN}  ╠══════════════════════════════════════════════════════════════════════════════════════════════════╣${NC}"
+    echo -e "${BGREEN}  ║                                                                                                  ║${NC}"
+    echo -e "${BGREEN}  ║${NC}  ${WHITE}LiveKit URL:${NC}   ${CYAN}wss://$LIVEKIT_DOMAIN${NC}                             ║${NC}"
+    echo -e "${BGREEN}  ║${NC}  ${WHITE}Интеграция:${NC}    ${GREEN}активна (через /lk-jwt)${NC}                         ║${NC}"
+    echo -e "${BGREEN}  ║                                                                                                  ║${NC}"
+    echo -e "${BGREEN}  ║${NC}  ${YELLOW}API Key:${NC}      ${WHITE}$LIVEKIT_KEY                                           ║${NC}"
+    echo -e "${BGREEN}  ║${NC}  ${YELLOW}API Secret:${NC}   ${WHITE}$LIVEKIT_SECRET                                        ║${NC}"
+    echo -e "${BGREEN}  ║                                                                                                  ║${NC}"
+    echo -e "${BGREEN}  ╠══════════════════════════════════════════════════════════════════════════════════════════════════╣${NC}"
+    echo -e "${BGREEN}  ║                                                                                                  ║${NC}"
+    echo -e "${BGREEN}  ║${NC}  ${DIM}Логи:${NC}     ${CYAN}docker compose logs -f livekit lk-jwt-service                  ║${NC}"
+    echo -e "${BGREEN}  ║${NC}  ${DIM}Статус:${NC}   ${CYAN}docker compose ps                                             ║${NC}"
+    echo -e "${BGREEN}  ║${NC}                                                                                             ║${NC}"
+    echo -e "${BGREEN}  ║${NC}  ${DIM}Учётные данные дополнены в:                                                          ║${NC}"
+    echo -e "${BGREEN}  ║${NC}  ${CYAN}$CREDS_FILE                                                                         ║${NC}"
+    echo -e "${BGREEN}  ║                                                                                                  ║${NC}"
+    echo -e "${BGREEN}  ╚══════════════════════════════════════════════════════════════════════════════════════════════════╝${NC}"
+    echo ""
+    echo -e "               ${PURPLE}◆${NC}  ${DIM}made by${NC}  ${BPURPLE}zxchubbabubba${NC}  ${PURPLE}◆${NC}"
+    echo ""
 }
 
 # ════════════════════════════════════════
