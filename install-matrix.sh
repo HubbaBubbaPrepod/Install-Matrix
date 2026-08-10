@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # ============================================================
-#  MATRIX SERVER INSTALLER v3.2
+#  MATRIX SERVER INSTALLER v3.2 (исправленный)
 #  by zxchubbabubba
 #  Поддерживает: Ubuntu 20.04 / 22.04 / 24.04
 #                Debian 11 / 12
@@ -405,8 +405,18 @@ media_store_path: /data/media_store
 
 registration_shared_secret: "$REG_SHARED_SECRET"
 report_stats: false
-enable_registration: true
-enable_registration_without_verification: true
+EOF
+
+    # Условие для enable_registration
+    if [[ "$has_mas" == "true" ]]; then
+        echo "enable_registration: false" >> "$HOMESERVER_FILE"
+        echo "enable_registration_without_verification: false" >> "$HOMESERVER_FILE"
+    else
+        echo "enable_registration: true" >> "$HOMESERVER_FILE"
+        echo "enable_registration_without_verification: true" >> "$HOMESERVER_FILE"
+    fi
+
+    cat >> "$HOMESERVER_FILE" <<EOF
 suppress_key_server_warning: true
 federation_domain_whitelist: []
 
