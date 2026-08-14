@@ -1441,6 +1441,13 @@ EOF
     detect_components
     generate_compose true false "$HAS_KETESA" "$HAS_ELEMENT_ADMIN" "$HAS_NTFY"
 
+    # syn2mas runs in a separate container user and must be able to read the
+    # Synapse configuration mounted read-only from the host.  Synapse itself
+    # does not require the file to be private (the database credentials are
+    # kept in .env), so make the mounted copy world-readable for the migration
+    # and MAS container while retaining the private directory permissions.
+    chmod 0644 "$HOMESERVER_FILE"
+
     run_spinner "Запуск баз данных Synapse и MAS" \
         docker compose up -d postgres mas-db
     run_spinner "Загрузка образа MAS" \
