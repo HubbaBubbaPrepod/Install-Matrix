@@ -1380,6 +1380,8 @@ EOF
         # MAS runs as an unprivileged container user and reads this bind mount.
         chmod 0644 "$MATRIX_DIR/data/mas/config.yaml"
         chmod 0755 "$MATRIX_DIR/data/mas"
+        # The bind-mounted file must be traversable by the container runtime.
+        chmod 0755 "$MATRIX_DIR" "$MATRIX_DIR/data"
     fi
 
     # Получение SSL для MAS
