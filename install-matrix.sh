@@ -733,6 +733,11 @@ EOF
     image: $KETESA_IMAGE
     container_name: matrix-ketesa
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
     ports:
       - "127.0.0.1:8083:8080"
     volumes:
