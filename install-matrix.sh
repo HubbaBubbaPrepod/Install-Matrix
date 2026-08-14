@@ -223,6 +223,7 @@ detect_components() {
     [[ -n "${KETESA_DOMAIN:-}" ]] && HAS_KETESA=true
     [[ -n "${ELEMENT_ADMIN_DOMAIN:-}" ]] && HAS_ELEMENT_ADMIN=true
     [[ -n "${NTFY_DOMAIN:-}" && -f "$MATRIX_DIR/data/ntfy/server.yml" ]] && HAS_NTFY=true
+    return 0
 }
 
 set_nginx_http2_syntax() {
