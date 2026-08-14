@@ -774,6 +774,11 @@ EOF
     restart: unless-stopped
     init: true
     command: serve
+    healthcheck:
+      test: ["CMD-SHELL", "HTTP_PROXY= HTTPS_PROXY= http_proxy= https_proxy= wget -qO- http://127.0.0.1/v1/health >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
     ports:
       - "127.0.0.1:8090:80"
     volumes:
