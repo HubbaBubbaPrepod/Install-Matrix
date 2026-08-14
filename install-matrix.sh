@@ -423,16 +423,30 @@ EOF
     chmod 700 /etc/letsencrypt/renewal-hooks/deploy/matrix-coturn.sh
 }
 
+# ════════════════════════════════════════
+#  НАСТРОЙКА WELL-KNOWN (ИСПРАВЛЕНО)
+# ════════════════════════════════════════
 configure_well_known() {
     local has_livekit="${1:-false}"
+    local has_mas="${2:-false}"
     local snippet="/etc/nginx/snippets/matrix-${DOMAIN}-well-known.conf"
     local client_json
     set_nginx_http2_syntax
 
-    client_json="{\"m.homeserver\":{\"base_url\":\"https://$DOMAIN\"}}"
-    if [[ "$has_livekit" == "true" ]]; then
-        client_json="{\"m.homeserver\":{\"base_url\":\"https://$DOMAIN\"},\"org.matrix.msc4143.rtc_foci\":[{\"type\":\"livekit\",\"livekit_service_url\":\"https://$DOMAIN/lk-jwt\"}]}"
+    # Базовая часть
+    client_json="{\"m.homeserver\":{\"base_url\":\"https://$DOMAIN\"}"
+
+    # Добавляем OIDC-данные MAS — без этого QR-код вход не работает
+    if [[ "$has_mas" == "true" && -n "${MAS_DOMAIN:-}" ]]; then
+        client_json="${client_json},\"org.matrix.msc2965.authentication\":{\"issuer\":\"https://$MAS_DOMAIN/\",\"account\":\"https://$MAS_DOMAIN/account\"}"
     fi
+
+    # LiveKit RTC
+    if [[ "$has_livekit" == "true" ]]; then
+        client_json="${client_json},\"org.matrix.msc4143.rtc_foci\":[{\"type\":\"livekit\",\"livekit_service_url\":\"https://$DOMAIN/lk-jwt\"}]"
+    fi
+
+    client_json="${client_json}}"
 
     mkdir -p /etc/nginx/snippets
     cat > "$snippet" <<EOF
@@ -971,7 +985,7 @@ install_matrix() {
         cd "$MATRIX_DIR"
         generate_compose "$HAS_MAS" "$HAS_LIVEKIT" "$HAS_KETESA" "$HAS_ELEMENT_ADMIN" "$HAS_NTFY"
         generate_homeserver "$HAS_MAS" "$HAS_LIVEKIT"
-        configure_well_known "$HAS_LIVEKIT"
+        configure_well_known "$HAS_LIVEKIT" "$HAS_MAS"   # исправлено
         update_nginx_http2_config "/etc/nginx/sites-available/matrix-${DOMAIN}.conf"
         if [[ "$HAS_MAS" == "true" ]]; then
             update_nginx_http2_config "/etc/nginx/sites-available/mas-${MAS_DOMAIN}.conf"
@@ -1110,7 +1124,7 @@ EOF
     # Nginx для основного домена
     set_nginx_http2_syntax
     NGINX_CONF="/etc/nginx/sites-available/matrix-${DOMAIN}.conf"
-    configure_well_known false
+    configure_well_known false false   # исправлено
     cat > "$NGINX_CONF" <<EOF
 server {
     listen 80;
@@ -1261,7 +1275,7 @@ install_mas() {
         cd "$MATRIX_DIR"
         generate_compose true "$HAS_LIVEKIT" "$HAS_KETESA" "$HAS_ELEMENT_ADMIN" "$HAS_NTFY"
         generate_homeserver true "$HAS_LIVEKIT"
-        configure_well_known "$HAS_LIVEKIT"
+        configure_well_known "$HAS_LIVEKIT" true   # исправлено
         update_nginx_http2_config "/etc/nginx/sites-available/matrix-${DOMAIN}.conf"
         update_nginx_http2_config "/etc/nginx/sites-available/mas-${MAS_DOMAIN}.conf"
         if [[ "$HAS_LIVEKIT" == "true" ]]; then
@@ -1709,7 +1723,7 @@ EOF
     detect_components
     generate_compose true true "$HAS_KETESA" "$HAS_ELEMENT_ADMIN" "$HAS_NTFY"
     generate_homeserver true true
-    configure_well_known true
+    configure_well_known true true   # исправлено
 
     # Добавляем /lk-jwt через отдельный файл-включение
     SNIPPET_FILE="/etc/nginx/snippets/matrix-${DOMAIN}-livekit.conf"
@@ -1836,7 +1850,7 @@ regenerate_stack() {
     detect_components
     generate_compose "$HAS_MAS" "$HAS_LIVEKIT" "$HAS_KETESA" "$HAS_ELEMENT_ADMIN" "$HAS_NTFY"
     generate_homeserver "$HAS_MAS" "$HAS_LIVEKIT"
-    configure_well_known "$HAS_LIVEKIT"
+    configure_well_known "$HAS_LIVEKIT" "$HAS_MAS"   # исправлено
 }
 
 apply_synapse_config() {
@@ -2250,6 +2264,9 @@ configure_registration() {
     log_ok "Режим регистрации: $REGISTRATION_MODE"
 }
 
+# ════════════════════════════════════════
+#  УСТАНОВКА XRAY (С ДОБАВЛЕНИЕМ GEO-БАЗ)
+# ════════════════════════════════════════
 install_xray_proxy() {
     log_step "Установка Xray-клиента и маршрутизация контейнеров"
     require_matrix
@@ -2370,6 +2387,18 @@ PY
     /usr/local/bin/xray run -test -config /usr/local/etc/xray/config.json \
         || log_error "Xray отклонил сгенерированную конфигурацию"
     systemctl enable --now xray
+
+    # === ДОБАВЛЯЕМ СВЕЖИЕ GEO-БАЗЫ ОТ runetfreedom ===
+    log_step "Загрузка актуальных geo-баз для Xray"
+    mkdir -p /usr/local/share/xray
+    run_with_retry "Загрузка geosite.dat (RU)" \
+        curl -fsSL https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geosite.dat \
+        -o /usr/local/share/xray/geosite.dat
+    run_with_retry "Загрузка geoip.dat (RU)" \
+        curl -fsSL https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geoip.dat \
+        -o /usr/local/share/xray/geoip.dat
+    chown "$xray_service_user" /usr/local/share/xray/geosite.dat /usr/local/share/xray/geoip.dat
+    log_ok "Geo-базы обновлены"
 
     mkdir -p /etc/systemd/system/docker.service.d
     cat > /etc/systemd/system/docker.service.d/http-proxy.conf <<'EOF'
