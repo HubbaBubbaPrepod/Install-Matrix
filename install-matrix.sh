@@ -534,7 +534,6 @@ load_env() {
         RETENTION_ENABLED="${RETENTION_ENABLED:-true}"
         RETENTION_DEFAULT_MIN_LIFETIME="${RETENTION_DEFAULT_MIN_LIFETIME:-1d}"
         RETENTION_DEFAULT_MAX_LIFETIME="${RETENTION_DEFAULT_MAX_LIFETIME:-365d}"
-        RETENTION_ALLOW_ADMIN_OVERRIDE="${RETENTION_ALLOW_ADMIN_OVERRIDE:-true}"
         LOCAL_MEDIA_LIFETIME="${LOCAL_MEDIA_LIFETIME:-30d}"
         set_image_defaults
     else
@@ -587,7 +586,6 @@ save_env() {
         printf 'RETENTION_ENABLED=%q\n' "${RETENTION_ENABLED:-true}"
         printf 'RETENTION_DEFAULT_MIN_LIFETIME=%q\n' "${RETENTION_DEFAULT_MIN_LIFETIME:-1d}"
         printf 'RETENTION_DEFAULT_MAX_LIFETIME=%q\n' "${RETENTION_DEFAULT_MAX_LIFETIME:-365d}"
-        printf 'RETENTION_ALLOW_ADMIN_OVERRIDE=%q\n' "${RETENTION_ALLOW_ADMIN_OVERRIDE:-true}"
         printf 'LOCAL_MEDIA_LIFETIME=%q\n' "${LOCAL_MEDIA_LIFETIME:-30d}"
     } > "$env_tmp"
     chmod 600 "$env_tmp"
@@ -884,10 +882,17 @@ if [[ "$RETENTION_ENABLED" == "true" ]]; then
     cat >> "$HOMESERVER_FILE" <<EOF
 
 retention:
+  enabled: true
   default_policy:
     min_lifetime: $RETENTION_DEFAULT_MIN_LIFETIME
     max_lifetime: $RETENTION_DEFAULT_MAX_LIFETIME
-  allow_room_admins_to_override: $RETENTION_ALLOW_ADMIN_OVERRIDE
+  allowed_lifetime_min: $RETENTION_DEFAULT_MIN_LIFETIME
+  allowed_lifetime_max: $RETENTION_DEFAULT_MAX_LIFETIME
+  purge_jobs:
+    - longest_max_lifetime: 3d
+      interval: 12h
+    - shortest_min_lifetime: 3d
+      interval: 24h
 EOF
 fi
 cat >> "$HOMESERVER_FILE" <<EOF
@@ -1061,7 +1066,6 @@ install_matrix() {
     RETENTION_ENABLED="true"
     RETENTION_DEFAULT_MIN_LIFETIME="1d"
     RETENTION_DEFAULT_MAX_LIFETIME="365d"
-    RETENTION_ALLOW_ADMIN_OVERRIDE="true"
     LOCAL_MEDIA_LIFETIME="30d"
     set_image_defaults
 
