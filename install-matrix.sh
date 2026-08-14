@@ -301,7 +301,6 @@ offer_swap_for_small_server() {
     fi
     if [[ -e /swapfile ]]; then
         log_warn "Файл /swapfile уже существует, но не активен; автоматическая настройка пропущена"
-        return
     fi
     log_warn "На сервере меньше 4 ГБ RAM и нет swap"
     echo -ne "  Создать swap-файл 2 ГБ? [Y/n]: "
