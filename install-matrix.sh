@@ -466,7 +466,10 @@ server {
 $NGINX_HTTP2_DIRECTIVE
     server_name $SERVER_NAME;
     include $snippet;
-    location / { return 404; }
+    location / {
+        default_type text/plain;
+        return 200 "Matrix homeserver: $SERVER_NAME\nUse $DOMAIN for the client API.\n";
+    }
     ssl_certificate /etc/letsencrypt/live/$SERVER_NAME/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/$SERVER_NAME/privkey.pem;
 }
@@ -1374,6 +1377,9 @@ account:
   password_recovery_enabled: false
 EOF
         log_ok "Конфиг MAS создан"
+        # MAS runs as an unprivileged container user and reads this bind mount.
+        chmod 0644 "$MATRIX_DIR/data/mas/config.yaml"
+        chmod 0755 "$MATRIX_DIR/data/mas"
     fi
 
     # Получение SSL для MAS
