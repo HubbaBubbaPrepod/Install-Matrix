@@ -2434,7 +2434,8 @@ show_menu() {
 # ════════════════════════════════════════
 #  ЗАПУСК
 # ════════════════════════════════════════
-if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+if [[ -z "${BASH_SOURCE[0]:-}" || "${BASH_SOURCE[0]}" == "$0" \
+      || "${BASH_SOURCE[0]}" == "/dev/stdin" ]]; then
     check_system
     while true; do
         show_menu
