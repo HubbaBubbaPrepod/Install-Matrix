@@ -531,6 +531,11 @@ load_env() {
         PRESENCE_ENABLED="${PRESENCE_ENABLED:-false}"
         PROXY_ENABLED="${PROXY_ENABLED:-false}"
         CONTAINER_PROXY_URL="${CONTAINER_PROXY_URL:-}"
+        RETENTION_ENABLED="${RETENTION_ENABLED:-true}"
+        RETENTION_DEFAULT_MIN_LIFETIME="${RETENTION_DEFAULT_MIN_LIFETIME:-1d}"
+        RETENTION_DEFAULT_MAX_LIFETIME="${RETENTION_DEFAULT_MAX_LIFETIME:-365d}"
+        RETENTION_ALLOW_ADMIN_OVERRIDE="${RETENTION_ALLOW_ADMIN_OVERRIDE:-true}"
+        LOCAL_MEDIA_LIFETIME="${LOCAL_MEDIA_LIFETIME:-30d}"
         set_image_defaults
     else
         log_error "Файл .env не найден. Сначала установите Matrix (пункт 1)."
@@ -579,6 +584,11 @@ save_env() {
         printf 'ELEMENT_ADMIN_IMAGE=%q\n' "$ELEMENT_ADMIN_IMAGE"
         printf 'NTFY_IMAGE=%q\n' "$NTFY_IMAGE"
         printf 'XRAY_VERSION=%q\n' "$XRAY_VERSION"
+        printf 'RETENTION_ENABLED=%q\n' "${RETENTION_ENABLED:-true}"
+        printf 'RETENTION_DEFAULT_MIN_LIFETIME=%q\n' "${RETENTION_DEFAULT_MIN_LIFETIME:-1d}"
+        printf 'RETENTION_DEFAULT_MAX_LIFETIME=%q\n' "${RETENTION_DEFAULT_MAX_LIFETIME:-365d}"
+        printf 'RETENTION_ALLOW_ADMIN_OVERRIDE=%q\n' "${RETENTION_ALLOW_ADMIN_OVERRIDE:-true}"
+        printf 'LOCAL_MEDIA_LIFETIME=%q\n' "${LOCAL_MEDIA_LIFETIME:-30d}"
     } > "$env_tmp"
     chmod 600 "$env_tmp"
     mv -f "$env_tmp" "$ENV_FILE"
@@ -861,9 +871,26 @@ database:
 
 media_store_path: /data/media_store
 max_upload_size: $MAX_UPLOAD_SIZE
+EOF
 
+cat >> "$HOMESERVER_FILE" <<EOF
 media_retention:
+  local_media_lifetime: $LOCAL_MEDIA_LIFETIME
   remote_media_lifetime: $REMOTE_MEDIA_LIFETIME
+EOF
+
+# Секция retention (если включена)
+if [[ "$RETENTION_ENABLED" == "true" ]]; then
+    cat >> "$HOMESERVER_FILE" <<EOF
+
+retention:
+  default_policy:
+    min_lifetime: $RETENTION_DEFAULT_MIN_LIFETIME
+    max_lifetime: $RETENTION_DEFAULT_MAX_LIFETIME
+  allow_room_admins_to_override: $RETENTION_ALLOW_ADMIN_OVERRIDE
+EOF
+fi
+cat >> "$HOMESERVER_FILE" <<EOF
 
 user_directory:
   enabled: true
@@ -1031,6 +1058,11 @@ install_matrix() {
     PRESENCE_ENABLED="false"
     PROXY_ENABLED="false"
     CONTAINER_PROXY_URL=""
+    RETENTION_ENABLED="true"
+    RETENTION_DEFAULT_MIN_LIFETIME="1d"
+    RETENTION_DEFAULT_MAX_LIFETIME="365d"
+    RETENTION_ALLOW_ADMIN_OVERRIDE="true"
+    LOCAL_MEDIA_LIFETIME="30d"
     set_image_defaults
 
     echo ""
