@@ -1474,8 +1474,7 @@ EOF
 
         set +e
         docker compose run --rm --no-deps mas \
-            syn2mas check \
-            --config /app/config/config.yaml \
+            --config /app/config/config.yaml syn2mas check \
             --synapse-config /data/synapse/homeserver.yaml \
             >/tmp/syn2mas-check.log 2>&1
         SYN2MAS_CHECK_STATUS=$?
@@ -1495,8 +1494,7 @@ EOF
 
         set +e
         docker compose run --rm --no-deps mas \
-            syn2mas migrate \
-            --config /app/config/config.yaml \
+            --config /app/config/config.yaml syn2mas migrate \
             --synapse-config /data/synapse/homeserver.yaml \
             >/tmp/syn2mas-migrate.log 2>&1
         SYN2MAS_MIGRATE_STATUS=$?
