@@ -1476,6 +1476,7 @@ EOF
         docker compose run --rm --no-deps mas \
             --config /app/config/config.yaml syn2mas check \
             --synapse-config /data/synapse/homeserver.yaml \
+            --synapse-database-uri "postgresql://synapse:${DB_PASSWORD:-}@postgres:5432/synapse" \
             >/tmp/syn2mas-check.log 2>&1
         SYN2MAS_CHECK_STATUS=$?
         set -e
@@ -1496,6 +1497,7 @@ EOF
         docker compose run --rm --no-deps mas \
             --config /app/config/config.yaml syn2mas migrate \
             --synapse-config /data/synapse/homeserver.yaml \
+            --synapse-database-uri "postgresql://synapse:${DB_PASSWORD:-}@postgres:5432/synapse" \
             >/tmp/syn2mas-migrate.log 2>&1
         SYN2MAS_MIGRATE_STATUS=$?
         set -e
