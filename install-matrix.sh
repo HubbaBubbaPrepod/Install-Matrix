@@ -298,7 +298,6 @@ offer_swap_for_small_server() {
     memory_kb=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)
     swap_kb=$(awk '/^SwapTotal:/ {print $2}' /proc/meminfo)
     if [[ "$memory_kb" -ge 4194304 || "$swap_kb" -gt 0 ]]; then
-        return
     fi
     if [[ -e /swapfile ]]; then
         log_warn "Файл /swapfile уже существует, но не активен; автоматическая настройка пропущена"
@@ -873,6 +872,10 @@ EOF
     elif [[ "$REGISTRATION_MODE" == "token" ]]; then
         echo "enable_registration: true" >> "$HOMESERVER_FILE"
         echo "registration_requires_token: true" >> "$HOMESERVER_FILE"
+    elif [[ "$REGISTRATION_MODE" == "open" ]]; then
+        echo "enable_registration: true" >> "$HOMESERVER_FILE"
+        echo "registration_requires_token: false" >> "$HOMESERVER_FILE"
+        echo "enable_registration_without_verification: true" >> "$HOMESERVER_FILE"
     else
         echo "enable_registration: false" >> "$HOMESERVER_FILE"
         echo "enable_registration_without_verification: false" >> "$HOMESERVER_FILE"
@@ -2214,11 +2217,13 @@ configure_registration() {
     echo "  1) Закрытая регистрация (рекомендуется)"
     echo "  2) Регистрация только по токену Synapse"
     echo -ne "  ${CYAN}▶${NC}  Выбор: "
+    echo "  3) Открытая регистрация без токена (обычный мессенджер)"
     local registration_choice
     read -r registration_choice
     case "$registration_choice" in
         1) REGISTRATION_MODE="closed" ;;
         2) REGISTRATION_MODE="token" ;;
+        3) REGISTRATION_MODE="open" ;;
         *) log_error "Неверный выбор" ;;
     esac
     save_env
