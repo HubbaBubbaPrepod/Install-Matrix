@@ -1,10 +1,9 @@
 #!/bin/bash
 
 # ============================================================
-#  MATRIX SERVER INSTALLER v3.2 (исправленный)
+#  MATRIX SERVER INSTALLER v3.3
 #  by zxchubbabubba
-#  Поддерживает: Ubuntu 20.04 / 22.04 / 24.04
-#                Debian 11 / 12
+#  Поддерживает: Ubuntu 20.04+ / Debian 11+
 #  Меню: Matrix, MAS, LiveKit (с финальным выводом)
 # ============================================================
 
@@ -83,8 +82,83 @@ run_spinner() {
     printf "\r  ${BGREEN}✓${NC}  ${WHITE}%s${NC}                    \n" "$msg"
 }
 
+wait_for_url() {
+    local url="$1"
+    local name="$2"
+    local timeout="${3:-120}"
+    local elapsed=0
+
+    while ! curl --fail --silent --show-error --max-time 10 "$url" >/dev/null 2>&1; do
+        sleep 2
+        elapsed=$((elapsed + 2))
+        if [[ $elapsed -ge $timeout ]]; then
+            log_error "$name не ответил за ${timeout}с: $url"
+        fi
+    done
+    log_ok "$name отвечает"
+}
+
+wait_for_http_status() {
+    local url="$1"
+    local expected="$2"
+    local name="$3"
+    local timeout="${4:-120}"
+    local elapsed=0
+    local status
+
+    while true; do
+        status=$(curl --silent --output /dev/null --max-time 10 \
+            --write-out '%{http_code}' "$url" || true)
+        if [[ "$status" == "$expected" ]]; then
+            log_ok "$name отвечает с ожидаемым HTTP $expected"
+            return
+        fi
+        sleep 2
+        elapsed=$((elapsed + 2))
+        if [[ $elapsed -ge $timeout ]]; then
+            log_error "$name вернул HTTP $status вместо $expected: $url"
+        fi
+    done
+}
+
 generate_secret() {
-    openssl rand -base64 32 | tr -d "=+/" | cut -c1-"${1:-32}"
+    local length="${1:-32}"
+    openssl rand -hex "$(( (length + 1) / 2 ))" | cut -c1-"$length"
+}
+
+set_nginx_http2_syntax() {
+    local nginx_version
+    nginx_version=$(nginx -v 2>&1 \
+        | sed -n 's#^nginx version: nginx/\([0-9][0-9.]*\).*$#\1#p')
+
+    # Директива `http2 on` появилась в Nginx 1.25.1. Старым версиям
+    # нужен прежний параметр `http2` в директиве listen.
+    NGINX_HTTP2_LISTEN=" http2"
+    NGINX_HTTP2_DIRECTIVE=""
+    if [[ -n "$nginx_version" ]] \
+        && dpkg --compare-versions "$nginx_version" ge "1.25.1"; then
+        NGINX_HTTP2_LISTEN=""
+        NGINX_HTTP2_DIRECTIVE="    http2 on;"
+    fi
+}
+
+update_nginx_http2_config() {
+    local config_file="$1"
+    [[ -f "$config_file" ]] || return
+
+    set_nginx_http2_syntax
+    if [[ -z "$NGINX_HTTP2_LISTEN" ]]; then
+        sed -Ei \
+            's/^([[:space:]]*listen[[:space:]]+[^;]*443[[:space:]]+ssl)[[:space:]]+http2;/\1;/' \
+            "$config_file"
+        sed -i '/^[[:space:]]*http2 on;$/d' "$config_file"
+        sed -i '/listen \[::\]:443 ssl;/a\    http2 on;' "$config_file"
+    else
+        sed -i '/^[[:space:]]*http2 on;$/d' "$config_file"
+        sed -Ei \
+            '/^[[:space:]]*listen[[:space:]]+[^;]*443[[:space:]]+ssl;$/s/ssl;/ssl http2;/' \
+            "$config_file"
+    fi
 }
 
 # ════════════════════════════════════════
@@ -140,10 +214,12 @@ install_base_packages() {
     log_step "Установка Docker (официальный репозиторий)"
 
     # Добавляем ключ Docker
-    curl -fsSL "https://download.docker.com/linux/$DISTRO/gpg" | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+    curl -fsSL "https://download.docker.com/linux/$DISTRO/gpg" \
+        | gpg --batch --yes --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
 
     # Добавляем репозиторий
-    echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/$DISTRO $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+    DOCKER_ARCH=$(dpkg --print-architecture)
+    echo "deb [arch=$DOCKER_ARCH signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/$DISTRO $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
 
     # Обновляем список с Docker
     run_spinner "Обновление списка пакетов (Docker)" \
@@ -191,7 +267,6 @@ setup_ufw() {
 
     for rule in \
         "22/tcp" "80/tcp" "443/tcp" \
-        "8008/tcp" "8448/tcp" \
         "3478/tcp" "3478/udp" \
         "5349/tcp" "5349/udp" \
         "49152:49252/udp"
@@ -200,7 +275,7 @@ setup_ufw() {
     done
     ufw --force enable >/dev/null 2>&1
 
-    log_ok "Открыты порты: 22, 80, 443, 8008, 8448, 3478, 5349, 49152-49252"
+    log_ok "Открыты порты: 22, 80, 443, 3478, 5349, 49152-49252"
 }
 
 # ════════════════════════════════════════
@@ -273,8 +348,7 @@ EOF
 
     cat >> "$COMPOSE_FILE" <<EOF
     ports:
-      - "8008:8008"
-      - "8448:8448"
+      - "127.0.0.1:8008:8008"
     volumes:
       - ./data/synapse:/data
     environment:
@@ -316,9 +390,10 @@ EOF
     depends_on:
       - mas-db
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     volumes:
       - ./data/mas/config.yaml:/app/config/config.yaml:ro
+      - ./data/synapse/homeserver.yaml:/data/synapse/homeserver.yaml:ro
     environment:
       - MAS_CONFIG=/app/config/config.yaml
     networks:
@@ -345,7 +420,7 @@ EOF
     depends_on:
       - mas
     ports:
-      - "8082:8080"
+      - "127.0.0.1:8082:8080"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
@@ -384,6 +459,7 @@ pid_file: /data/homeserver.pid
 
 listeners:
   - port: 8008
+    bind_addresses: ['0.0.0.0']
     resources:
       - compress: false
         names: [client, federation]
@@ -428,6 +504,7 @@ trusted_key_servers:
   - server_name: "matrix.org"
 
 public_baseurl: https://$DOMAIN/
+serve_server_wellknown: true
 
 turn_uris:
   - "turn:$DOMAIN?transport=udp"
@@ -454,7 +531,13 @@ EOF
 
 experimental_features:
   msc3266_enabled: true
+  msc4143_enabled: true
   msc4222_enabled: true
+
+matrix_rtc:
+  transports:
+    - type: livekit
+      livekit_service_url: "https://$DOMAIN/lk-jwt"
 
 extra_well_known_client_content:
   org.matrix.msc4143.rtc_foci:
@@ -473,6 +556,35 @@ EOF
 # ════════════════════════════════════════
 install_matrix() {
     log_step "Установка Matrix (базовая)"
+
+    # Повторный запуск не должен менять секреты уже созданной базы данных.
+    if [[ -f "$ENV_FILE" && -f "$MATRIX_DIR/data/postgres/PG_VERSION" ]]; then
+        load_env
+        HAS_MAS=false
+        HAS_LIVEKIT=false
+        [[ -n "${MAS_DOMAIN:-}" && -f "$MATRIX_DIR/data/mas/config.yaml" ]] && HAS_MAS=true
+        [[ -n "${LIVEKIT_DOMAIN:-}" && -f "$MATRIX_DIR/data/livekit/livekit.yaml" ]] && HAS_LIVEKIT=true
+
+        cd "$MATRIX_DIR"
+        generate_compose "$HAS_MAS" "$HAS_LIVEKIT"
+        generate_homeserver "$HAS_MAS" "$HAS_LIVEKIT"
+        update_nginx_http2_config "/etc/nginx/sites-available/matrix-${DOMAIN}.conf"
+        if [[ "$HAS_MAS" == "true" ]]; then
+            update_nginx_http2_config "/etc/nginx/sites-available/mas-${MAS_DOMAIN}.conf"
+        fi
+        if [[ "$HAS_LIVEKIT" == "true" ]]; then
+            update_nginx_http2_config "/etc/nginx/sites-available/livekit-${LIVEKIT_DOMAIN}.conf"
+        fi
+        nginx -t >/dev/null 2>&1 || log_error "Ошибка конфигурации Nginx"
+        systemctl reload nginx
+        run_spinner "Проверка существующего стека Matrix" \
+            docker compose up -d
+        run_spinner "Перезапуск Synapse с актуальной конфигурацией" \
+            docker compose restart synapse
+        wait_for_url "https://$DOMAIN/_matrix/client/versions" "Публичный Matrix API"
+        log_ok "Matrix уже установлен; конфигурация проверена без смены секретов"
+        return
+    fi
 
     # Запрос данных
     echo ""
@@ -567,6 +679,7 @@ EOF
     log_ok "Сертификаты скопированы для Coturn"
 
     # Nginx для основного домена
+    set_nginx_http2_syntax
     NGINX_CONF="/etc/nginx/sites-available/matrix-${DOMAIN}.conf"
     cat > "$NGINX_CONF" <<EOF
 server {
@@ -577,9 +690,12 @@ server {
 }
 
 server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
+    listen 443 ssl${NGINX_HTTP2_LISTEN};
+    listen [::]:443 ssl${NGINX_HTTP2_LISTEN};
+$NGINX_HTTP2_DIRECTIVE
     server_name $DOMAIN;
+
+    include /etc/nginx/snippets/matrix-${DOMAIN}-*.conf;
 
     add_header X-Frame-Options "DENY" always;
     add_header X-Content-Type-Options "nosniff" always;
@@ -633,6 +749,7 @@ EOF
         fi
     done
     printf "\r  ${BGREEN}✓${NC}  ${WHITE}Synapse готов!${NC}                        \n"
+    wait_for_url "https://$DOMAIN/_matrix/client/versions" "Публичный Matrix API"
 
     # Создание администратора
     log_step "Создание администратора"
@@ -701,6 +818,36 @@ install_mas() {
     fi
 
     load_env
+
+    MIGRATION_MARKER="$MATRIX_DIR/data/mas/.syn2mas-complete"
+    if [[ -n "${MAS_DOMAIN:-}" && -n "${MAS_SECRET:-}" \
+          && -f "$MATRIX_DIR/data/mas/config.yaml" \
+          && -f "$MIGRATION_MARKER" ]]; then
+        HAS_LIVEKIT=false
+        [[ -n "${LIVEKIT_DOMAIN:-}" && -f "$MATRIX_DIR/data/livekit/livekit.yaml" ]] \
+            && HAS_LIVEKIT=true
+        cd "$MATRIX_DIR"
+        generate_compose true "$HAS_LIVEKIT"
+        generate_homeserver true "$HAS_LIVEKIT"
+        update_nginx_http2_config "/etc/nginx/sites-available/matrix-${DOMAIN}.conf"
+        update_nginx_http2_config "/etc/nginx/sites-available/mas-${MAS_DOMAIN}.conf"
+        if [[ "$HAS_LIVEKIT" == "true" ]]; then
+            update_nginx_http2_config "/etc/nginx/sites-available/livekit-${LIVEKIT_DOMAIN}.conf"
+        fi
+        nginx -t >/dev/null 2>&1 || log_error "Ошибка конфигурации Nginx"
+        systemctl reload nginx
+        run_spinner "Проверка существующего стека MAS" \
+            docker compose up -d
+        run_spinner "Перезапуск Synapse с конфигурацией MAS" \
+            docker compose restart synapse
+        wait_for_url "https://$MAS_DOMAIN/.well-known/openid-configuration" "MAS OIDC discovery"
+        wait_for_url "https://$DOMAIN/_matrix/client/versions" "Matrix API после включения MAS"
+        if [[ "$HAS_LIVEKIT" == "true" ]]; then
+            wait_for_url "https://$DOMAIN/lk-jwt/healthz" "MatrixRTC Authorization Service"
+        fi
+        log_ok "MAS уже установлен; конфигурация проверена без смены ключей шифрования"
+        return
+    fi
 
     # Запрос домена для MAS
     echo ""
@@ -788,6 +935,7 @@ passwords:
   schemes:
   - version: 1
     algorithm: bcrypt
+    unicode_normalization: true
   - version: 2
     algorithm: argon2id
   minimum_complexity: 3
@@ -811,6 +959,7 @@ EOF
     get_ssl_cert "$MAS_DOMAIN"
 
     # Настройка Nginx для MAS
+    set_nginx_http2_syntax
     NGINX_MAS_CONF="/etc/nginx/sites-available/mas-${MAS_DOMAIN}.conf"
     cat > "$NGINX_MAS_CONF" <<EOF
 server {
@@ -821,8 +970,9 @@ server {
 }
 
 server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
+    listen 443 ssl${NGINX_HTTP2_LISTEN};
+    listen [::]:443 ssl${NGINX_HTTP2_LISTEN};
+$NGINX_HTTP2_DIRECTIVE
     server_name $MAS_DOMAIN;
 
     location / {
@@ -843,19 +993,108 @@ server {
 EOF
 
     ln -sf "$NGINX_MAS_CONF" /etc/nginx/sites-enabled/
+
+    # Legacy Matrix clients send login/logout/refresh to the homeserver domain.
+    # With delegated authentication these compatibility endpoints belong to MAS.
+    MAS_COMPAT_SNIPPET="/etc/nginx/snippets/matrix-${DOMAIN}-mas.conf"
+    cat > "$MAS_COMPAT_SNIPPET" <<EOF
+location ~ ^/_matrix/client/(?:r0|v1|v3|unstable)/(?:login|logout(?:/all)?|refresh)$ {
+    proxy_pass http://127.0.0.1:8080;
+    proxy_http_version 1.1;
+    proxy_set_header Host \$host;
+    proxy_set_header X-Real-IP \$remote_addr;
+    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto \$scheme;
+    proxy_buffering off;
+}
+EOF
+
     nginx -t >/dev/null 2>&1 || log_error "Ошибка конфигурации Nginx для MAS"
     systemctl reload nginx
     log_ok "Nginx для MAS настроен"
 
-    # Перегенерируем compose и homeserver с включенным MAS
+    # Подготавливаем контейнеры и переносим существующие аккаунты/сессии в MAS.
+    # Запускать пустой MAS рядом с уже работающим Synapse без syn2mas нельзя:
+    # после включения делегированной авторизации старые пользователи потеряют вход.
     cd "$MATRIX_DIR"
     generate_compose true false
-    generate_homeserver true false
+
+    run_spinner "Запуск баз данных Synapse и MAS" \
+        docker compose up -d postgres mas-db
+    run_spinner "Загрузка образа MAS" \
+        docker compose pull mas
+
+    for _ in {1..60}; do
+        if docker compose exec -T mas-db pg_isready -U mas_user -d mas >/dev/null 2>&1; then
+            break
+        fi
+        sleep 1
+    done
+    docker compose exec -T mas-db pg_isready -U mas_user -d mas >/dev/null 2>&1 \
+        || log_error "База данных MAS не готова"
+
+    if [[ ! -f "$MIGRATION_MARKER" ]]; then
+        BACKUP_DIR="$MATRIX_DIR/data/backups/mas-migration-$(date +%Y%m%d-%H%M%S)"
+        mkdir -p "$BACKUP_DIR"
+        cp "$HOMESERVER_FILE" "$BACKUP_DIR/homeserver.yaml"
+        docker compose exec -T postgres pg_dump -U synapse synapse \
+            > "$BACKUP_DIR/synapse.sql" \
+            || log_error "Не удалось создать резервную копию Synapse"
+        chmod -R 700 "$BACKUP_DIR"
+        log_ok "Резервная копия Synapse создана"
+
+        set +e
+        docker compose run --rm --no-deps mas \
+            syn2mas check \
+            --config /app/config/config.yaml \
+            --synapse-config /data/synapse/homeserver.yaml \
+            >/tmp/syn2mas-check.log 2>&1
+        SYN2MAS_CHECK_STATUS=$?
+        set -e
+        if [[ $SYN2MAS_CHECK_STATUS -ne 0 && $SYN2MAS_CHECK_STATUS -ne 11 ]]; then
+            tail -50 /tmp/syn2mas-check.log
+            log_error "Проверка syn2mas завершилась ошибкой"
+        fi
+        if [[ $SYN2MAS_CHECK_STATUS -eq 11 ]]; then
+            log_warn "syn2mas сообщил предупреждения; регистрация Synapse будет отключена перед миграцией"
+        else
+            log_ok "Проверка syn2mas пройдена"
+        fi
+
+        docker compose stop synapse >/dev/null 2>&1 || true
+        generate_homeserver true false
+
+        set +e
+        docker compose run --rm --no-deps mas \
+            syn2mas migrate \
+            --config /app/config/config.yaml \
+            --synapse-config /data/synapse/homeserver.yaml \
+            >/tmp/syn2mas-migrate.log 2>&1
+        SYN2MAS_MIGRATE_STATUS=$?
+        set -e
+        if [[ $SYN2MAS_MIGRATE_STATUS -ne 0 && $SYN2MAS_MIGRATE_STATUS -ne 11 ]]; then
+            tail -50 /tmp/syn2mas-migrate.log
+            cp "$BACKUP_DIR/homeserver.yaml" "$HOMESERVER_FILE"
+            chown 991:991 "$HOMESERVER_FILE"
+            docker compose up -d postgres synapse coturn >/dev/null 2>&1 || true
+            log_error "Миграция syn2mas завершилась ошибкой; конфигурация Synapse восстановлена"
+        fi
+        touch "$MIGRATION_MARKER"
+        chmod 600 "$MIGRATION_MARKER"
+        log_ok "Аккаунты и сессии перенесены в MAS"
+    else
+        generate_homeserver true false
+        log_ok "Миграция syn2mas уже была выполнена"
+    fi
 
     # Перезапуск сервисов
     log_step "Перезапуск сервисов с MAS"
     run_spinner "Запуск обновлённого стека" \
         docker compose up -d
+    run_spinner "Перезапуск Synapse с конфигурацией MAS" \
+        docker compose restart synapse
+    wait_for_url "https://$MAS_DOMAIN/.well-known/openid-configuration" "MAS OIDC discovery"
+    wait_for_url "https://$DOMAIN/_matrix/client/versions" "Matrix API после включения MAS"
 
     # Дописываем данные в credentials.txt
     CREDS_FILE="$MATRIX_DIR/credentials.txt"
@@ -924,26 +1163,34 @@ install_livekit() {
         log_error "MAS не установлен. Сначала установите MAS (пункт 2)."
     fi
 
-    # Запрос домена для LiveKit
-    echo ""
-    echo -e "  ${DIM}Домен для LiveKit (например, livekit.$DOMAIN)${NC}"
-    echo -ne "  ${CYAN}▶${NC}  "
-    read -r LIVEKIT_DOMAIN
-    LIVEKIT_DOMAIN=$(echo "$LIVEKIT_DOMAIN" | xargs)
-    if [[ -z "$LIVEKIT_DOMAIN" ]]; then
-        LIVEKIT_DOMAIN="livekit.$DOMAIN"
-        log_ok "Используем поддомен: ${CYAN}$LIVEKIT_DOMAIN${NC}"
+    LIVEKIT_ALREADY_INSTALLED=false
+    if [[ -n "${LIVEKIT_DOMAIN:-}" && -n "${LIVEKIT_KEY:-}" \
+          && -n "${LIVEKIT_SECRET:-}" \
+          && -f "$MATRIX_DIR/data/livekit/livekit.yaml" ]]; then
+        LIVEKIT_ALREADY_INSTALLED=true
+        log_ok "LiveKit уже установлен; существующие API-ключи будут сохранены"
     else
-        log_ok "Домен LiveKit: ${CYAN}$LIVEKIT_DOMAIN${NC}"
+        # Запрос домена для LiveKit
+        echo ""
+        echo -e "  ${DIM}Домен для LiveKit (например, livekit.$DOMAIN)${NC}"
+        echo -ne "  ${CYAN}▶${NC}  "
+        read -r LIVEKIT_DOMAIN
+        LIVEKIT_DOMAIN=$(echo "$LIVEKIT_DOMAIN" | xargs)
+        if [[ -z "$LIVEKIT_DOMAIN" ]]; then
+            LIVEKIT_DOMAIN="livekit.$DOMAIN"
+            log_ok "Используем поддомен: ${CYAN}$LIVEKIT_DOMAIN${NC}"
+        else
+            log_ok "Домен LiveKit: ${CYAN}$LIVEKIT_DOMAIN${NC}"
+        fi
+
+        # Генерация ключей LiveKit
+        LIVEKIT_KEY=$(generate_secret 64)
+        LIVEKIT_SECRET=$(generate_secret 64)
+        log_ok "Ключи LiveKit сгенерированы"
+
+        # Сохраняем в .env
+        save_env
     fi
-
-    # Генерация ключей LiveKit
-    LIVEKIT_KEY=$(generate_secret 64)
-    LIVEKIT_SECRET=$(generate_secret 64)
-    log_ok "Ключи LiveKit сгенерированы"
-
-    # Сохраняем в .env
-    save_env
 
     # Создаём каталог для конфига LiveKit
     mkdir -p "$MATRIX_DIR/data/livekit"
@@ -957,6 +1204,8 @@ rtc:
   node_ip: $EXTERNAL_IP
 keys:
   $LIVEKIT_KEY: $LIVEKIT_SECRET
+room:
+  auto_create: false
 logging:
   level: info
 EOF
@@ -966,6 +1215,7 @@ EOF
     get_ssl_cert "$LIVEKIT_DOMAIN"
 
     # Настройка Nginx для LiveKit
+    set_nginx_http2_syntax
     NGINX_LIVEKIT_CONF="/etc/nginx/sites-available/livekit-${LIVEKIT_DOMAIN}.conf"
     cat > "$NGINX_LIVEKIT_CONF" <<EOF
 server {
@@ -976,8 +1226,9 @@ server {
 }
 
 server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
+    listen 443 ssl${NGINX_HTTP2_LISTEN};
+    listen [::]:443 ssl${NGINX_HTTP2_LISTEN};
+$NGINX_HTTP2_DIRECTIVE
     server_name $LIVEKIT_DOMAIN;
 
     location / {
@@ -1005,10 +1256,13 @@ EOF
 
     # Открываем порты для LiveKit
     log_step "Открытие портов для LiveKit"
-    for rule in "7880/tcp" "7881/tcp" "50000:50100/udp"; do
+    for old_rule in "8008/tcp" "8448/tcp" "7880/tcp"; do
+        ufw --force delete allow "$old_rule" >/dev/null 2>&1 || true
+    done
+    for rule in "7881/tcp" "50000:50100/udp"; do
         ufw allow "$rule" >/dev/null 2>&1
     done
-    log_ok "Открыты порты 7880, 7881, 50000-50100"
+    log_ok "Открыты медиапорты 7881/tcp и 50000-50100/udp"
 
     # Перегенерируем compose и homeserver с включенным LiveKit
     cd "$MATRIX_DIR"
@@ -1016,10 +1270,16 @@ EOF
     generate_homeserver true true
 
     # Добавляем /lk-jwt через отдельный файл-включение
-    SNIPPET_FILE="/etc/nginx/snippets/lk-jwt-${DOMAIN}.conf"
+    SNIPPET_FILE="/etc/nginx/snippets/matrix-${DOMAIN}-livekit.conf"
     cat > "$SNIPPET_FILE" <<EOF
-location /lk-jwt {
-    proxy_pass http://127.0.0.1:8082;
+location = /lk-jwt {
+    return 308 /lk-jwt/;
+}
+
+location ^~ /lk-jwt/ {
+    # Завершающий / снимает публичный префикс /lk-jwt. JWT-сервис
+    # принимает /sfu/get, /get_token, /sfu_webhook и /healthz.
+    proxy_pass http://127.0.0.1:8082/;
     proxy_http_version 1.1;
     proxy_set_header Host \$host;
     proxy_set_header X-Real-IP \$remote_addr;
@@ -1032,23 +1292,36 @@ location /lk-jwt {
 EOF
 
     MAIN_NGINX="/etc/nginx/sites-available/matrix-${DOMAIN}.conf"
-    if ! grep -q "include $SNIPPET_FILE" "$MAIN_NGINX"; then
-        sed -i "/server_name $DOMAIN;/a \    include $SNIPPET_FILE;" "$MAIN_NGINX"
-        nginx -t >/dev/null 2>&1 || log_error "Ошибка добавления include для /lk-jwt в Nginx"
-        systemctl reload nginx
-        log_ok "Добавлен прокси /lk-jwt на основной домен"
-    else
-        log_ok "/lk-jwt уже существует"
+    INCLUDE_GLOB="/etc/nginx/snippets/matrix-${DOMAIN}-*.conf"
+    if ! grep -Fq "include $INCLUDE_GLOB;" "$MAIN_NGINX"; then
+        sed -i "/add_header X-Frame-Options/i\    include $INCLUDE_GLOB;\n" "$MAIN_NGINX"
     fi
+    rm -f "/etc/nginx/snippets/lk-jwt-${DOMAIN}.conf"
+    nginx -t >/dev/null 2>&1 || log_error "Ошибка добавления /lk-jwt в Nginx"
+    systemctl reload nginx
+    log_ok "Добавлен прокси /lk-jwt с корректным снятием префикса"
 
     # Перезапуск сервисов
     log_step "Перезапуск сервисов с LiveKit"
     run_spinner "Запуск обновлённого стека" \
         docker compose up -d
+    run_spinner "Применение конфигурации LiveKit" \
+        docker compose restart livekit lk-jwt-service
+    run_spinner "Перезапуск Synapse с конфигурацией MatrixRTC" \
+        docker compose restart synapse
+    wait_for_url "https://$DOMAIN/lk-jwt/healthz" "MatrixRTC Authorization Service"
+    wait_for_url "https://$DOMAIN/.well-known/matrix/server" "Matrix federation discovery"
+    wait_for_http_status \
+        "https://$DOMAIN/_matrix/client/unstable/org.matrix.msc4143/rtc/transports" \
+        "401" "MatrixRTC transport discovery"
 
-    # Дописываем данные в credentials.txt
+    # Обновляем секцию LiveKit в credentials.txt, не оставляя устаревшие ключи
     CREDS_FILE="$MATRIX_DIR/credentials.txt"
     if [[ -f "$CREDS_FILE" ]]; then
+        sed -i \
+            -e '/^LiveKit (звонки)$/,/^API Secret:/d' \
+            -e '/^Matrix Server — Credentials (дополнено LiveKit)$/,/^API Secret:/d' \
+            "$CREDS_FILE"
         cat >> "$CREDS_FILE" <<CREDS
 
 LiveKit (звонки)
@@ -1130,7 +1403,7 @@ show_menu() {
     echo -e "${YELLOW}       ╚══════╝╚══════╝╚═╝  ╚═╝  ╚═══╝  ╚══════╝╚═╝  ╚═╝${NC}"
     echo ""
     echo -e "${BRED}  ════════════════════════════════════════════════════════${NC}"
-    echo -e "     ${DIM}Ubuntu 20.04+ · Debian 11+  ·  version 3.2${NC}"
+    echo -e "     ${DIM}Ubuntu 20.04+ · Debian 11+  ·  version 3.3${NC}"
     echo -e "${BRED}  ════════════════════════════════════════════════════════${NC}"
     echo ""
     echo -e "  ${WHITE}Выберите действие:${NC}"
