@@ -507,7 +507,7 @@ load_env() {
         ADMIN_EMAIL="${ADMIN_EMAIL:-admin@$DOMAIN}"
         MAS_DB_PASSWORD="${MAS_DB_PASSWORD:-${DB_PASSWORD:-}}"
         REGISTRATION_MODE="${REGISTRATION_MODE:-closed}"
-        FEDERATION_MODE="${FEDERATION_MODE:-public}"
+        FEDERATION_MODE="${FEDERATION_MODE:-restricted}"
         MAX_UPLOAD_SIZE="${MAX_UPLOAD_SIZE:-2048M}"
         REMOTE_MEDIA_LIFETIME="${REMOTE_MEDIA_LIFETIME:-14d}"
         PRESENCE_ENABLED="${PRESENCE_ENABLED:-false}"
@@ -547,7 +547,7 @@ save_env() {
         printf 'PROXY_ENABLED=%q\n' "${PROXY_ENABLED:-false}"
         printf 'CONTAINER_PROXY_URL=%q\n' "${CONTAINER_PROXY_URL:-}"
         printf 'REGISTRATION_MODE=%q\n' "${REGISTRATION_MODE:-closed}"
-        printf 'FEDERATION_MODE=%q\n' "${FEDERATION_MODE:-public}"
+        printf 'FEDERATION_MODE=%q\n' "${FEDERATION_MODE:-restricted}"
         printf 'MAX_UPLOAD_SIZE=%q\n' "${MAX_UPLOAD_SIZE:-2048M}"
         printf 'REMOTE_MEDIA_LIFETIME=%q\n' "${REMOTE_MEDIA_LIFETIME:-14d}"
         printf 'PRESENCE_ENABLED=%q\n' "${PRESENCE_ENABLED:-false}"
@@ -994,7 +994,9 @@ install_matrix() {
     echo -ne "  ${CYAN}▶${NC}  Режим [1]: "
     read -r REG_CHOICE
     [[ "$REG_CHOICE" == "2" ]] && REGISTRATION_MODE="token" || REGISTRATION_MODE="closed"
-    FEDERATION_MODE="public"
+    # Безопасный режим по умолчанию: исходящая федерация закрыта до явного
+    # добавления доменов через меню или включения публичного режима.
+    FEDERATION_MODE="restricted"
     MAX_UPLOAD_SIZE="2048M"
     REMOTE_MEDIA_LIFETIME="14d"
     PRESENCE_ENABLED="false"
@@ -1046,6 +1048,8 @@ install_matrix() {
 
     # Создание структуры
     mkdir -p "$MATRIX_DIR"/data/{postgres,synapse,coturn/tls}
+    touch "$FEDERATION_FILE"
+    chmod 600 "$FEDERATION_FILE"
     cd "$MATRIX_DIR"
 
     # Сохраняем переменные
