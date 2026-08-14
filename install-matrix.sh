@@ -2229,6 +2229,20 @@ configure_registration() {
     save_env
     cd "$MATRIX_DIR"
     apply_synapse_config
+    if [[ "$HAS_MAS" == "true" && -f "$MATRIX_DIR/data/mas/config.yaml" ]]; then
+        if [[ "$REGISTRATION_MODE" == "open" ]]; then
+            sed -i 's/password_registration_enabled: false/password_registration_enabled: true/; s/password_registration_token_required: true/password_registration_token_required: false/' \
+                "$MATRIX_DIR/data/mas/config.yaml"
+        elif [[ "$REGISTRATION_MODE" == "token" ]]; then
+            sed -i 's/password_registration_enabled: false/password_registration_enabled: true/; s/password_registration_token_required: false/password_registration_token_required: true/' \
+                "$MATRIX_DIR/data/mas/config.yaml"
+        else
+            sed -i 's/password_registration_enabled: true/password_registration_enabled: false/' \
+                "$MATRIX_DIR/data/mas/config.yaml"
+        fi
+        chmod 0644 "$MATRIX_DIR/data/mas/config.yaml"
+        docker compose restart mas >/dev/null 2>&1 || true
+    fi
     log_ok "Режим регистрации: $REGISTRATION_MODE"
 }
 
