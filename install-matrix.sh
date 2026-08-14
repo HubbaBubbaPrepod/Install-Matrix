@@ -298,6 +298,7 @@ offer_swap_for_small_server() {
     memory_kb=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)
     swap_kb=$(awk '/^SwapTotal:/ {print $2}' /proc/meminfo)
     if [[ "$memory_kb" -ge 4194304 || "$swap_kb" -gt 0 ]]; then
+        return
     fi
     if [[ -e /swapfile ]]; then
         log_warn "Файл /swapfile уже существует, но не активен; автоматическая настройка пропущена"
@@ -2211,7 +2212,6 @@ configure_registration() {
     if [[ "$HAS_MAS" == "true" ]]; then
         log_warn "Регистрацией управляет MAS: регистрация по паролю включена только с токеном"
         echo "  Токены создаются средствами MAS; открытая регистрация без проверки отключена."
-        return
     fi
     echo "  1) Закрытая регистрация (рекомендуется)"
     echo "  2) Регистрация только по токену Synapse"
