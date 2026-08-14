@@ -1,0 +1,7 @@
+.env
+credentials.txt
+federation-domains.txt
+docker-compose.yml
+data/
+*.backup.*
+*.rollback.*

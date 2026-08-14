@@ -1,0 +1,22 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  installer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install static test dependencies
+        run: sudo apt-get update && sudo apt-get install -y shellcheck python3-yaml
+      - name: Bash syntax
+        run: bash -n install-matrix.sh
+      - name: ShellCheck
+        run: shellcheck --severity=error -x -e SC1091 install-matrix.sh tests/static-render.sh
+      - name: Render and validate generated YAML
+        run: bash tests/static-render.sh
