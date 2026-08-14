@@ -929,6 +929,7 @@ matrix_authentication_service:
     enabled: true
     endpoint: "http://mas:8080/"
     secret: "$MAS_SECRET"
+    rendezvous_enabled: true
 EOF
     fi
 
@@ -939,6 +940,7 @@ experimental_features:
   msc3266_enabled: true
   msc4143_enabled: true
   msc4222_enabled: true
+  msc4108_enabled: true
 
 matrix_rtc:
   transports:
