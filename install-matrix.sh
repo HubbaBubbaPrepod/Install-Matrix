@@ -348,6 +348,7 @@ install_base_packages() {
         -o /tmp/docker-repository.gpg
     gpg --batch --yes --dearmor \
         -o /usr/share/keyrings/docker-archive-keyring.gpg /tmp/docker-repository.gpg
+    chmod 0644 /usr/share/keyrings/docker-archive-keyring.gpg
     rm -f /tmp/docker-repository.gpg
 
     # Добавляем репозиторий
