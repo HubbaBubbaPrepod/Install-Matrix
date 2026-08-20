@@ -1,4 +1,16 @@
-# Install-Matrix
+# Install Matrix
+
+Automated Matrix Synapse deployment for Ubuntu and Debian.
+
+[ Install Matrix ] [ Documentation ] [ Issues ]
+
+Matrix Synapse
+PostgreSQL
+Coturn
+Nginx
+Let's Encrypt
+MAS
+LiveKit
 
 Интерактивный установщик собственного Matrix-сервера для Ubuntu 20.04+ и Debian 11+. Версия 4.0 разворачивает безопасный базовый стек и позволяет отдельно подключать аутентификацию, MatrixRTC, админ-панели, UnifiedPush и исходящий VLESS-прокси.
 
