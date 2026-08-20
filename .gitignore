@@ -6,3 +6,17 @@ data/
 *.backup.*
 *.rollback.*
 .supply-check/
+
+# Локальные заметки автора — не публиковать в репозитории.
+/docs/COMMUNITY.md
+/docs/COMMUNITY.ru.md
+/docs/ECOSYSTEM.md
+/docs/ECOSYSTEM.ru.md
+/docs/RELEASING.md
+/docs/RELEASING.ru.md
+/docs/REPOSITORY_SETTINGS.md
+/docs/REPOSITORY_SETTINGS.ru.md
+/docs/TUTORIAL.md
+/docs/TUTORIAL.ru.md
+/docs/VIDEO_SCRIPT.md
+/docs/VIDEO_SCRIPT.ru.md
