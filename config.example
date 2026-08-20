@@ -1,0 +1,38 @@
+# Скопируйте в приватный файл (chmod 600) и передайте через --config.
+SERVER_NAME=example.com
+DOMAIN=matrix.example.com
+ADMIN_EMAIL=admin@example.com
+EXTERNAL_IP=203.0.113.10
+
+REGISTRATION_MODE=closed
+FEDERATION_MODE=restricted
+MAX_UPLOAD_SIZE=2048M
+REMOTE_MEDIA_LIFETIME=14d
+LOCAL_MEDIA_LIFETIME=30d
+PRESENCE_ENABLED=false
+RETENTION_ENABLED=true
+RETENTION_DEFAULT_MIN_LIFETIME=1d
+RETENTION_DEFAULT_MAX_LIFETIME=365d
+
+ENABLE_MAS=false
+MAS_DOMAIN=mas.example.com
+ENABLE_LIVEKIT=false
+LIVEKIT_DOMAIN=livekit.example.com
+ENABLE_KETESA=false
+KETESA_DOMAIN=admin.example.com
+ENABLE_ELEMENT_ADMIN=false
+ELEMENT_ADMIN_DOMAIN=element-admin.example.com
+ENABLE_NTFY=false
+NTFY_DOMAIN=ntfy.example.com
+NTFY_ADMIN_USER=admin
+
+# Необязательный первый администратор. Не записывайте сам пароль в этот файл.
+ADMIN_USER=admin
+ADMIN_PASSWORD_FILE=/root/install-matrix-admin-password
+
+# managed применяет версии образов из нового установщика при `update`.
+# custom сохраняет ссылки на образы из .env.
+IMAGE_POLICY=managed
+
+PROXY_ENABLED=false
+CONTAINER_PROXY_URL=

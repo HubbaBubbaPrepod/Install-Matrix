@@ -1,0 +1,16 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Local checksum verification cache"
+paths = ['''(^|/)\.supply-check/''']
+
+[[rules]]
+id = "jfrog-identity-token"
+
+  [[rules.allowlists]]
+  description = "Published SHA-256 checksums are verification metadata, not secrets"
+  regexTarget = "line"
+  regexes = [
+    '''_SHA256="[0-9a-f]{64}"''',
+  ]

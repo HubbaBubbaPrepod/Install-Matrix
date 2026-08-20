@@ -8,15 +8,52 @@ permissions:
   contents: read
 
 jobs:
-  installer:
+  lint-and-test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Install static test dependencies
-        run: sudo apt-get update && sudo apt-get install -y shellcheck python3-yaml
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install test dependencies
+        run: sudo apt-get update && sudo apt-get install -y shellcheck python3-yaml yamllint
       - name: Bash syntax
-        run: bash -n install-matrix.sh
+        run: bash -n install-matrix.sh tests/*.sh scripts/*.sh
       - name: ShellCheck
-        run: shellcheck --severity=error -x -e SC1091 install-matrix.sh tests/static-render.sh
-      - name: Render and validate generated YAML
+        run: shellcheck --severity=warning -x -e SC1091 install-matrix.sh tests/*.sh scripts/*.sh
+      - name: Render every supported configuration
         run: bash tests/static-render.sh
+      - name: CLI and dry-run
+        run: bash tests/cli.sh
+      - name: Backup lifecycle
+        run: bash tests/lifecycle.sh
+      - name: Documentation and assets
+        run: bash tests/docs.sh
+      - name: Supply-chain policy
+        run: bash tests/supply-chain.sh
+      - name: YAML lint
+        run: yamllint .github .yamllint.yml
+      - name: Markdown lint
+        run: npx --yes markdownlint-cli2@0.18.1 "**/*.{md,MD}" "#data"
+
+  distro-render:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - ubuntu:20.04
+          - ubuntu:22.04
+          - ubuntu:24.04
+          - debian:11
+          - debian:12
+          - debian:13
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Render on ${{ matrix.image }}
+        env:
+          DISTRO_IMAGE: ${{ matrix.image }}
+        run: |
+          docker run --rm -v "$PWD:/work" -w /work "$DISTRO_IMAGE" \
+            sh -c 'apt-get update -qq && apt-get install -y -qq bash python3 python3-yaml && bash tests/static-render.sh'

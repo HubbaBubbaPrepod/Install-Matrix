@@ -1,20 +1,27 @@
 ---
-name: Feature request
-about: Suggest an idea for this project
-title: ''
-labels: ''
+name: Предложить функцию
+about: Улучшение установки, надёжности или UX
+title: '[Feature] '
+labels: enhancement
 assignees: ''
-
 ---
 
-**Is your feature request related to a problem? Please describe.**
-A clear and concise description of what the problem is. Ex. I'm always frustrated when [...]
+## Проблема
 
-**Describe the solution you'd like**
-A clear and concise description of what you want to happen.
+Какую проблему развёртывания или обслуживания это решает?
 
-**Describe alternatives you've considered**
-A clear and concise description of any alternative solutions or features you've considered.
+## Предлагаемое поведение
 
-**Additional context**
-Add any other context or screenshots about the feature request here.
+Опишите команду, сценарий меню или конфигурацию с точки зрения пользователя.
+
+## Альтернативы
+
+Что пользователь может сделать сейчас и почему этого недостаточно?
+
+## Безопасность и совместимость
+
+Как должны работать backup, rollback, идемпотентность, существующие установки и поддерживаемые версии ОС?
+
+## Дополнительный контекст
+
+Приветствуются ссылки, upstream-документация и примеры вывода.

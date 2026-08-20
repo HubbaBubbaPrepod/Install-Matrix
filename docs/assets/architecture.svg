@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="620" viewBox="0 0 1200 620" role="img" aria-labelledby="title desc">
+  <title id="title">Архитектура Install-Matrix</title>
+  <desc id="desc">Nginx принимает интернет-трафик и проксирует Synapse, MAS, MatrixRTC, панели администратора и ntfy. Synapse и MAS используют PostgreSQL. Звонки обслуживают Coturn и LiveKit.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#090d18"/><stop offset="1" stop-color="#151b2f"/></linearGradient>
+    <filter id="shadow"><feDropShadow dx="0" dy="6" stdDeviation="10" flood-opacity=".28"/></filter>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#7dd3fc"/></marker>
+    <style>.box{fill:#151f36;stroke:#475569;stroke-width:2;rx:16;filter:url(#shadow)}.core{stroke:#22d3ee}.optional{stroke:#a78bfa}.data{stroke:#34d399}.t{fill:#f8fafc;font:600 22px system-ui,sans-serif;text-anchor:middle}.s{fill:#94a3b8;font:15px system-ui,sans-serif;text-anchor:middle}.line{stroke:#7dd3fc;stroke-width:3;fill:none;marker-end:url(#arrow)}</style>
+  </defs>
+  <rect width="1200" height="620" rx="28" fill="url(#bg)"/>
+  <text x="600" y="48" class="t" font-size="28">Install-Matrix · архитектура одного VPS</text>
+  <rect x="475" y="78" width="250" height="70" class="box core"/><text x="600" y="108" class="t">Интернет</text><text x="600" y="132" class="s">клиенты · федерация · звонки</text>
+  <path d="M600 148 V188" class="line"/>
+  <rect x="450" y="190" width="300" height="78" class="box core"/><text x="600" y="224" class="t">Nginx + TLS</text><text x="600" y="250" class="s">публичный HTTPS :443 · .well-known</text>
+  <path d="M500 268 V315 H225 V344" class="line"/><path d="M560 268 V315 H465 V344" class="line"/><path d="M640 268 V315 H735 V344" class="line"/><path d="M700 268 V315 H975 V344" class="line"/>
+  <rect x="90" y="346" width="270" height="76" class="box core"/><text x="225" y="378" class="t">Synapse</text><text x="225" y="403" class="s">Client API · федерация</text>
+  <rect x="380" y="346" width="170" height="76" class="box optional"/><text x="465" y="378" class="t">MAS</text><text x="465" y="403" class="s">опциональная auth</text>
+  <rect x="635" y="346" width="200" height="76" class="box optional"/><text x="735" y="378" class="t">lk-jwt</text><text x="735" y="403" class="s">auth MatrixRTC</text>
+  <rect x="865" y="346" width="220" height="76" class="box optional"/><text x="975" y="378" class="t">Admin · ntfy</text><text x="975" y="403" class="s">сервисы loopback</text>
+  <path d="M225 422 V476" class="line"/><path d="M465 422 V476" class="line"/><path d="M735 422 V476" class="line"/>
+  <rect x="110" y="478" width="230" height="76" class="box data"/><text x="225" y="510" class="t">PostgreSQL</text><text x="225" y="535" class="s">база Synapse</text>
+  <rect x="380" y="478" width="170" height="76" class="box data"/><text x="465" y="510" class="t">PostgreSQL</text><text x="465" y="535" class="s">база MAS</text>
+  <rect x="635" y="478" width="200" height="76" class="box optional"/><text x="735" y="510" class="t">LiveKit</text><text x="735" y="535" class="s">передача медиа</text>
+  <rect x="865" y="478" width="220" height="76" class="box core"/><text x="975" y="510" class="t">Coturn</text><text x="975" y="535" class="s">TURN / STUN</text>
+  <path d="M680 148 C850 180 970 225 975 476" class="line" stroke-dasharray="8 7"/>
+  <text x="600" y="594" class="s">Публичный HTTP проходит через Nginx; базы остаются в изолированной сети Compose.</text>
+</svg>

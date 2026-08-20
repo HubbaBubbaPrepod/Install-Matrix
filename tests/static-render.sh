@@ -45,6 +45,16 @@ NTFY_DOMAIN="ntfy.example.com"
 NTFY_ADMIN_USER="admin"
 CONTAINER_PROXY_URL="http://host.docker.internal:10809"
 REGISTRATION_MODE="closed"
+
+set_mas_registration_flags
+[[ "$MAS_REGISTRATION_ENABLED" == "false" && "$MAS_REGISTRATION_TOKEN_REQUIRED" == "false" ]]
+REGISTRATION_MODE="token"
+set_mas_registration_flags
+[[ "$MAS_REGISTRATION_ENABLED" == "true" && "$MAS_REGISTRATION_TOKEN_REQUIRED" == "true" ]]
+REGISTRATION_MODE="open"
+set_mas_registration_flags
+[[ "$MAS_REGISTRATION_ENABLED" == "true" && "$MAS_REGISTRATION_TOKEN_REQUIRED" == "false" ]]
+REGISTRATION_MODE="closed"
 FEDERATION_MODE="public"
 MAX_UPLOAD_SIZE="2048M"
 REMOTE_MEDIA_LIFETIME="14d"
@@ -52,32 +62,68 @@ PRESENCE_ENABLED="false"
 RETENTION_ENABLED="true"
 RETENTION_DEFAULT_MIN_LIFETIME="1d"
 RETENTION_DEFAULT_MAX_LIFETIME="365d"
-RETENTION_ALLOW_ADMIN_OVERRIDE="true"
 LOCAL_MEDIA_LIFETIME="30d"
 set_image_defaults
 
-generate_compose true true true true true >/dev/null
-generate_homeserver true true >/dev/null
+# Render every valid optional-component combination. LiveKit and Element Admin require MAS.
+for mask in $(seq 0 31); do
+    has_mas=$((mask & 1)); has_livekit=$((mask & 2)); has_ketesa=$((mask & 4))
+    has_element_admin=$((mask & 8)); has_ntfy=$((mask & 16))
+    ((has_livekit == 0 || has_mas == 1)) || continue
+    ((has_element_admin == 0 || has_mas == 1)) || continue
+    bools=()
+    for bit in "$has_mas" "$has_livekit" "$has_ketesa" "$has_element_admin" "$has_ntfy"; do
+        [[ "$bit" == 0 ]] && bools+=(false) || bools+=(true)
+    done
+    generate_compose "${bools[@]}" >/dev/null
+    generate_homeserver "${bools[0]}" "${bools[1]}" >/dev/null
+    cp "$COMPOSE_FILE" "$TEST_DIR/render-${mask}-compose.yml"
+    cp "$HOMESERVER_FILE" "$TEST_DIR/render-${mask}-homeserver.yml"
+done
 
-python3 - "$COMPOSE_FILE" "$HOMESERVER_FILE" <<'PY'
+python3 - "$TEST_DIR" <<'PY'
+import pathlib
 import sys
 import yaml
 
-with open(sys.argv[1], encoding="utf-8") as handle:
-    compose = yaml.safe_load(handle)
-with open(sys.argv[2], encoding="utf-8") as handle:
-    homeserver = yaml.safe_load(handle)
-
-expected = {
-    "postgres", "synapse", "coturn", "mas-db", "mas", "livekit",
-    "lk-jwt-service", "ketesa", "element-admin", "ntfy",
-}
-assert expected <= set(compose["services"])
-assert homeserver["server_name"] == "example.com"
-assert homeserver["public_baseurl"] == "https://matrix.example.com/"
-assert "federation_domain_whitelist" not in homeserver
-assert homeserver["enable_registration"] is False
+root = pathlib.Path(sys.argv[1])
+for compose_file in root.glob("render-*-compose.yml"):
+    mask = int(compose_file.name.split("-")[1])
+    homeserver_file = root / compose_file.name.replace("compose", "homeserver")
+    with compose_file.open(encoding="utf-8") as handle:
+        compose = yaml.safe_load(handle)
+    with homeserver_file.open(encoding="utf-8") as handle:
+        homeserver = yaml.safe_load(handle)
+    expected = {"postgres", "synapse", "coturn"}
+    for bit, services in enumerate([
+        {"mas-db", "mas"}, {"livekit", "lk-jwt-service"}, {"ketesa"},
+        {"element-admin"}, {"ntfy"},
+    ]):
+        if mask & (1 << bit):
+            expected |= services
+    assert set(compose["services"]) == expected, compose_file
+    assert homeserver["server_name"] == "example.com"
+    assert homeserver["public_baseurl"] == "https://matrix.example.com/"
+    assert "federation_domain_whitelist" not in homeserver
+    assert homeserver["enable_registration"] is False
 PY
+
+# Registration modes remain intentionally supported.
+for registration_case in closed token open; do
+    REGISTRATION_MODE="$registration_case"
+    generate_homeserver false false >/dev/null
+    python3 - "$HOMESERVER_FILE" "$registration_case" <<'PY'
+import sys
+import yaml
+with open(sys.argv[1], encoding="utf-8") as handle:
+    config = yaml.safe_load(handle)
+mode = sys.argv[2]
+assert config["enable_registration"] is (mode != "closed")
+assert config.get("registration_requires_token", False) is (mode == "token")
+assert config.get("enable_registration_without_verification", False) is (mode == "open")
+PY
+done
+REGISTRATION_MODE="closed"
 
 printf '%s\n' matrix.org example.net > "$FEDERATION_FILE"
 FEDERATION_MODE="restricted"
@@ -93,6 +139,24 @@ PY
 
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
     docker compose -f "$COMPOSE_FILE" config --quiet
+fi
+
+# Config files are data, not shell programs.
+cat > "$TEST_DIR/config.env" <<'EOF'
+SERVER_NAME=config.example.com
+DOMAIN=matrix.config.example.com
+ADMIN_EMAIL=admin@config.example.com
+REGISTRATION_MODE=token
+ENABLE_MAS=true
+EOF
+load_config_file "$TEST_DIR/config.env"
+[[ "$SERVER_NAME" == "config.example.com" ]]
+[[ "$ENABLE_MAS" == "true" ]]
+
+echo 'UNSUPPORTED_KEY=value' > "$TEST_DIR/invalid.env"
+if (load_config_file "$TEST_DIR/invalid.env" >/dev/null 2>&1); then
+    echo "Unknown config key was unexpectedly accepted" >&2
+    exit 1
 fi
 
 echo "Static render tests passed"

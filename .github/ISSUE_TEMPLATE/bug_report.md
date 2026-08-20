@@ -1,38 +1,45 @@
 ---
-name: Bug report
-about: Create a report to help us improve
-title: ''
-labels: ''
+name: Сообщить об ошибке
+about: Воспроизводимая проблема установщика или развёртывания
+title: '[Bug] '
+labels: bug
 assignees: ''
-
 ---
 
-**Describe the bug**
-A clear and concise description of what the bug is.
+## Перед отправкой
 
-**To Reproduce**
-Steps to reproduce the behavior:
-1. Go to '...'
-2. Click on '....'
-3. Scroll down to '....'
-4. See error
+- [ ] Я использовал релиз с тегом и проверил его checksum.
+- [ ] Я просмотрел существующие issues.
+- [ ] Я удалил пароли, токены, signing keys, приватные домены/IP и VLESS URI.
+- [ ] Это не уязвимость. Об уязвимостях сообщают по `SECURITY.ru.md`.
 
-**Expected behavior**
-A clear and concise description of what you expected to happen.
+## Окружение
 
-**Screenshots**
-If applicable, add screenshots to help explain your problem.
+- Версия Install-Matrix (`./install-matrix.sh --version`):
+- ОС и версия:
+- Архитектура (`dpkg --print-architecture`):
+- Новая установка, update, restore или uninstall:
+- Включённые дополнительные компоненты:
 
-**Desktop (please complete the following information):**
- - OS: [e.g. iOS]
- - Browser [e.g. chrome, safari]
- - Version [e.g. 22]
+## Ожидаемое поведение
 
-**Smartphone (please complete the following information):**
- - Device: [e.g. iPhone6]
- - OS: [e.g. iOS8.1]
- - Browser [e.g. stock browser, safari]
- - Version [e.g. 22]
+Что должно было произойти?
 
-**Additional context**
-Add any other context about the problem here.
+## Фактическое поведение
+
+Что произошло вместо этого?
+
+## Воспроизведение
+
+Приведите минимальную последовательность команд и действий.
+
+## Диагностика
+
+Добавьте очищенный от приватных данных вывод:
+
+```text
+sudo ./install-matrix.sh diagnose
+cd /root/matrix-server && docker compose ps
+```
+
+Прикладывайте только относящиеся к ошибке строки. Никогда не публикуйте `.env`, `credentials.txt`, signing keys или полную конфигурацию MAS/Xray.

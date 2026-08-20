@@ -1,191 +1,210 @@
-# Install Matrix
+# Install-Matrix
 
-Automated Matrix Synapse deployment for Ubuntu and Debian.
+> **Простой способ развернуть готовый к эксплуатации сервер Matrix Synapse на обычном VPS.**
 
-[ Install Matrix ] [ Documentation ] [ Issues ]
+[English version](README.en.md)
 
-Matrix Synapse
-PostgreSQL
-Coturn
-Nginx
-Let's Encrypt
-MAS
-LiveKit
+Один установщик для Synapse, PostgreSQL, Nginx, Let's Encrypt и Coturn. Дополнительно поддерживаются MAS, MatrixRTC/LiveKit, панели администрирования, ntfy и исходящий прокси Xray.
 
-Интерактивный установщик собственного Matrix-сервера для Ubuntu 20.04+ и Debian 11+. Версия 4.0 разворачивает безопасный базовый стек и позволяет отдельно подключать аутентификацию, MatrixRTC, админ-панели, UnifiedPush и исходящий VLESS-прокси.
+[![CI](https://github.com/HubbaBubbaPrepod/Install-Matrix/actions/workflows/ci.yml/badge.svg)](https://github.com/HubbaBubbaPrepod/Install-Matrix/actions/workflows/ci.yml)
+[![Security](https://github.com/HubbaBubbaPrepod/Install-Matrix/actions/workflows/security.yml/badge.svg)](https://github.com/HubbaBubbaPrepod/Install-Matrix/actions/workflows/security.yml)
+[![Release](https://img.shields.io/github/v/release/HubbaBubbaPrepod/Install-Matrix)](https://github.com/HubbaBubbaPrepod/Install-Matrix/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Element Web и Element Call намеренно не устанавливаются. LiveKit в этом проекте — серверная часть MatrixRTC для совместимых Matrix-клиентов, а не веб-интерфейс Element Call.
+[Быстрый старт](#быстрый-старт) · [Документация](#документация) · [CLI](#cli-и-автоматизация) · [Issues](https://github.com/HubbaBubbaPrepod/Install-Matrix/issues)
 
-## Состав
+![Архитектура Install-Matrix](docs/assets/architecture.svg)
 
-Базовая установка:
+## Что устанавливается?
 
-- Synapse с PostgreSQL;
-- Coturn;
-- Nginx и сертификаты Let's Encrypt;
-- UFW;
-- корректное разделение `server_name` и публичного Matrix API через `.well-known` delegation.
+| Компонент | Статус | Назначение |
+|---|---|---|
+| Matrix Synapse | В комплекте | Домашний сервер и федерация |
+| PostgreSQL | В комплекте | Рабочая база данных |
+| Coturn | В комплекте | TURN/STUN для звонков |
+| Nginx | В комплекте | TLS и обратный прокси |
+| Let's Encrypt | В комплекте | Автоматические HTTPS-сертификаты |
+| UFW | В комплекте | Межсетевой экран с сохранением текущего SSH-порта |
+| Matrix Authentication Service | Опционально | Современная аутентификация Matrix |
+| LiveKit + lk-jwt-service | Опционально | Медиасервер MatrixRTC |
+| Ketesa / Element Admin | Опционально | Панели администрирования |
+| ntfy | Опционально | Сервер UnifiedPush |
+| Xray/VLESS | Опционально | Исходящий HTTP(S)-прокси контейнеров |
 
-Опционально:
+## Зачем Install-Matrix?
 
-- Matrix Authentication Service (MAS), включая `syn2mas` и admin API;
-- LiveKit и `lk-jwt-service` для MatrixRTC;
-- Ketesa Admin;
-- Element Admin;
-- ntfy как собственный сервер UnifiedPush;
-- Xray/VLESS для исходящего HTTP(S)-трафика Docker-контейнеров.
+Обычное развёртывание Matrix требует вручную связать базу данных, обратный прокси, TLS, TURN, обнаружение федерации и резервное копирование. Install-Matrix сохраняет удобную интерактивную установку и одновременно предоставляет воспроизводимый CLI для cloud-init, Ansible и CI.
 
-Используются закреплённые версии образов, а не `latest`. Значения можно переопределить в защищённом файле `/root/matrix-server/.env`.
+- безопасные настройки по умолчанию и явный выбор регистрации: `closed`, `token` или `open`;
+- образы закреплены версиями и OCI digest, внешние загрузки — неизменяемыми версиями и SHA-256;
+- backup, проверка контрольных сумм, restore, update и rollback образов;
+- удаление сервисов с сохранением данных или полная очистка;
+- проверки PostgreSQL, Synapse, Coturn, TLS, федерации, MAS, MatrixRTC и ntfy;
+- автоматический рендер всех допустимых комбинаций компонентов на Ubuntu и Debian.
 
-## DNS до установки
+Проект рассчитан на понятное развёртывание на одном VPS. Для сильно изменяемой многоузловой установки через Ansible лучше рассмотреть `matrix-docker-ansible-deploy`.
 
-Предположим, основной домен — `example.com`, а IP сервера — `203.0.113.10`.
+## Быстрый старт
 
-| Назначение | Имя | Тип | Значение | Обязательность |
-|---|---|---|---|---|
-| Matrix ID (`@user:example.com`) и delegation | `example.com` | `A` | `203.0.113.10` | обязательно |
-| Matrix Client/Federation API | `matrix.example.com` | `A` | `203.0.113.10` | обязательно |
-| MAS | `mas.example.com` | `A` | `203.0.113.10` | если ставится MAS |
-| MatrixRTC/LiveKit | `livekit.example.com` | `A` | `203.0.113.10` | если ставится LiveKit |
-| Ketesa Admin | `admin.example.com` | `A` | `203.0.113.10` | если ставится Ketesa |
-| Element Admin | `element-admin.example.com` | `A` | `203.0.113.10` | если ставится Element Admin |
-| ntfy | `ntfy.example.com` | `A` | `203.0.113.10` | если ставится ntfy |
-
-Можно использовать wildcard `A` для `*.example.com`, но отдельная запись apex-домена `example.com` всё равно нужна. SRV, MX и TXT-записи установщику не требуются.
-
-Важные условия:
-
-- не создавайте `AAAA`, если IPv6 на сервере и в Nginx не настроен полностью;
-- если у домена есть CAA, он должен разрешать `letsencrypt.org`;
-- на время выпуска сертификатов порты `80/tcp` и `443/tcp` должны вести прямо на сервер, без закрытого proxy/CDN-режима;
-- DNS должен успеть обновиться до запуска соответствующего пункта меню.
-
-## Сетевые порты
-
-Открываются базово:
-
-- `22/tcp` — SSH;
-- `80/tcp`, `443/tcp` — HTTP/HTTPS, Client API и федерация;
-- `3478/tcp+udp`, `5349/tcp+udp`, `49152-49252/udp` — Coturn.
-
-Для LiveKit дополнительно:
-
-- `7881/tcp`;
-- `50000-50100/udp`.
-
-Synapse `8008`, MAS `8080`, lk-jwt `8082`, Ketesa `8083`, Element Admin `8084` и ntfy `8090` слушают только `127.0.0.1`. Порт федерации `8448` не нужен: Nginx обслуживает федерацию на `443`.
-
-## Установка
+### Рекомендуется: релиз с проверкой контрольной суммы
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/HubbaBubbaPrepod/Install-Matrix/refs/heads/main/install-matrix.sh -o install-matrix.sh
+VERSION=v4.1.0
+curl -fLO "https://github.com/HubbaBubbaPrepod/Install-Matrix/releases/download/${VERSION}/install-matrix.sh"
+curl -fLO "https://github.com/HubbaBubbaPrepod/Install-Matrix/releases/download/${VERSION}/SHA256SUMS"
+sha256sum --check --ignore-missing SHA256SUMS
+less install-matrix.sh
 chmod +x install-matrix.sh
 sudo ./install-matrix.sh
 ```
 
-Скрипт создаёт установку в `/root/matrix-server`.
+Не запускайте от `root` непроверенный скрипт из изменяемой ветки. Каждый релиз собирается GitHub Actions и содержит `SHA256SUMS`.
 
-## Меню
+### Загрузка и запуск одной командой
 
-1. Установить или восстановить Matrix.
-2. Установить MAS.
-3. Установить LiveKit/MatrixRTC без Element Call.
-4. Добавить федеративный домен в ограниченный allowlist.
-5. Просмотреть/изменить режим федерации.
-6. Установить Ketesa Admin.
-7. Установить Element Admin (требует MAS).
-8. Установить ntfy.
-9. Настроить Xray по VLESS URI.
-10. Настроить регистрацию.
-11. Создать резервную копию.
-12. Запустить диагностику.
-13. Обновить контейнеры с предварительным backup.
+```bash
+VERSION=v4.1.0; curl -fsSLo install-matrix.sh "https://github.com/HubbaBubbaPrepod/Install-Matrix/releases/download/${VERSION}/install-matrix.sh" && chmod +x install-matrix.sh && sudo ./install-matrix.sh
+```
 
-### Федерация
+Установка размещается в `/root/matrix-server`.
 
-По умолчанию исходящая федерация закрыта: новый сервер не связывается с внешними Matrix-серверами. Пункт «Добавить федерацию» принимает как домен (`matrix.org`), так и Matrix ID (`@alice:matrix.org`), извлекает домен и безопасно перезапускает Synapse. Отдельный пункт меню позволяет явно включить публичный режим.
+## DNS до установки
 
-В restricted-режиме `federation_domain_whitelist` ограничивает исходящие федеративные соединения. Пустой allowlist блокирует их полностью. В меню можно удалить домен или вернуться в публичный режим; при ошибке запуска `homeserver.yaml` откатывается.
+Предположим, домен Matrix ID — `example.com`, а IPv4 сервера — `203.0.113.10`.
 
-### Регистрация
+| Назначение | DNS-имя | Обязательно |
+|---|---|---|
+| Matrix ID и делегирование `.well-known` | `example.com` | Да |
+| Matrix Client/Federation API | `matrix.example.com` | Да |
+| MAS | `mas.example.com` | При включённом MAS |
+| MatrixRTC | `livekit.example.com` | При включённом LiveKit |
+| Ketesa | `admin.example.com` | При включении |
+| Element Admin | `element-admin.example.com` | При включении |
+| ntfy | `ntfy.example.com` | При включении |
 
-Открытая регистрация без проверки не поддерживается. Для Synapse доступны закрытый режим и регистрация по токену. После установки MAS регистрацией управляет MAS, а парольная регистрация требует токен.
+Во время выпуска сертификатов Let's Encrypt все записи должны напрямую указывать на сервер. Не публикуйте `AAAA`, пока IPv6 не настроен полностью. Существующие CAA-записи должны разрешать `letsencrypt.org`.
 
-### Админ-панели
+## Поддерживаемые системы
 
-Ketesa — лёгкая панель, ограниченная URL текущего homeserver. Element Admin требует MAS и включённый MAS admin API. Обе панели устанавливаются отдельно и не включают Element Web.
+CI создаёт и проверяет конфигурации в следующих окружениях. Перед production-релизом настоящая установка проверяется ручным E2E workflow на одноразовой виртуальной машине.
 
-### ntfy
+| ОС | Версия | Рендер в CI | Условие production-релиза |
+|---|---:|:---:|:---:|
+| Ubuntu | 20.04 | ✅ | Ручной E2E |
+| Ubuntu | 22.04 | ✅ | Ручной E2E |
+| Ubuntu | 24.04 | ✅ | Ручной E2E |
+| Debian | 11 | ✅ | Ручной E2E |
+| Debian | 12 | ✅ | Ручной E2E |
+| Debian | 13 | ✅ | Ручной E2E |
 
-ntfy разворачивается с закрытым доступом и отдельным администратором. Это endpoint для клиентов, поддерживающих UnifiedPush; он не заменяет push gateway автоматически для любого Matrix-клиента.
+Официально поддерживается архитектура `amd64`. Другие архитектуры могут работать, если все выбранные образы имеют подходящий manifest, но пока не блокируют выпуск релиза.
 
-### Xray
+## Режимы регистрации
 
-Пункт Xray принимает VLESS URI, строит конфигурацию Xray, проверяет её и настраивает HTTP-прокси для Docker daemon и контейнеров. Частные адреса и российские назначения направляются напрямую, остальные — через VLESS. Сама VLESS-ссылка не сохраняется в `.env` или `credentials.txt`.
+| Режим | Поведение |
+|---|---|
+| `closed` | Создание новых аккаунтов отключено |
+| `token` | Для регистрации требуется токен Synapse/MAS |
+| `open` | Регистрация без токена с обязательным подтверждением риска |
 
-Если на сервере уже есть `/usr/local/etc/xray/config.json`, скрипт запросит подтверждение и создаст резервную копию перед заменой.
+Открытая регистрация намеренно доступна, но может привлечь ботов и злоупотребления. В non-interactive режиме одновременно требуются `REGISTRATION_MODE=open` и `--allow-open-registration`.
 
-## Файлы и резервные копии
+## CLI и автоматизация
+
+```bash
+sudo ./install-matrix.sh --help
+sudo ./install-matrix.sh diagnose
+sudo ./install-matrix.sh backup
+sudo ./install-matrix.sh verify-backup latest
+sudo ./install-matrix.sh restore latest
+sudo ./install-matrix.sh update
+sudo ./install-matrix.sh rollback
+sudo ./install-matrix.sh uninstall --keep-data
+```
+
+Неинтерактивная установка:
+
+```bash
+sudo ./install-matrix.sh install \
+  --non-interactive \
+  --config config.env \
+  --yes
+```
+
+Проверка и рендер без изменения операционной системы:
+
+```bash
+./install-matrix.sh install --dry-run --config config.env
+```
+
+Скопируйте [`config.example`](config.example), а настоящий файл храните вне Git. Пароль администратора читается из `ADMIN_PASSWORD_FILE` и не передаётся аргументом командной строки.
+
+## Сетевые порты
+
+| Порты | Компонент |
+|---|---|
+| Текущий SSH-порт, `80/tcp`, `443/tcp` | Доступ к серверу и HTTPS |
+| `3478/tcp+udp`, `5349/tcp+udp`, `49152-49252/udp` | Coturn |
+| `7881/tcp`, `50000-50100/udp` | LiveKit при включении |
+
+HTTP-порты приложений привязаны только к `127.0.0.1`. Федерация обслуживается на `443`; публичный порт `8448` не требуется.
+
+## Результат установки
+
+Установщик завершает работу единым отчётом:
 
 ```text
-/root/matrix-server/
-├── .env                         # 0600
-├── docker-compose.yml
-├── credentials.txt              # 0600
-├── federation-domains.txt       # 0600
-└── data/
-    ├── postgres/
-    ├── synapse/
-    ├── coturn/
-    ├── mas/
-    ├── mas-db/
-    ├── livekit/
-    ├── ketesa/
-    ├── ntfy/
-    └── backups/
+✓ Docker Compose config
+✓ PostgreSQL
+✓ Synapse
+✓ Coturn
+✓ Nginx и HTTPS
+✓ Matrix Client API
+✓ Matrix Federation API
+✓ MAS / LiveKit / ntfy — если включены
 ```
 
-Backup включает дампы PostgreSQL Synapse/MAS, секреты и конфигурации. `media_store` намеренно исключён из быстрого backup и должен копироваться отдельно на внешнее хранилище. Проверяйте восстановление резервных копий до эксплуатации.
+Учётные данные записываются с правами `0600` в `/root/matrix-server/credentials.txt`. Секреты не выводятся в финальном баннере.
 
-## Диагностика
+## Документация
 
-Пункт диагностики проверяет:
+- [Резервное копирование и восстановление](BACKUP.ru.md)
+- [Обновление и откат](UPDATE.ru.md)
+- [Удаление](UNINSTALL.ru.md)
+- [Политика безопасности](SECURITY.ru.md)
+- [FAQ](docs/FAQ.ru.md)
+- [Архитектура](docs/ARCHITECTURE.ru.md)
+- [Выпуск релиза](docs/RELEASING.ru.md)
+- [Настройки репозитория GitHub](docs/REPOSITORY_SETTINGS.ru.md)
+- [Публикация в экосистеме Matrix](docs/ECOSYSTEM.ru.md)
+- [Запуск сообщества и demo](docs/COMMUNITY.ru.md)
+- [Сценарий 60-секундного видео](docs/VIDEO_SCRIPT.ru.md)
+- [Статья о проекте](docs/TUTORIAL.ru.md)
+- [Участие в разработке](CONTRIBUTING.ru.md)
+- [Поддержка](SUPPORT.ru.md)
+- [Кодекс поведения](CODE_OF_CONDUCT.ru.md)
+- [История изменений](CHANGELOG.ru.md)
 
-- `docker compose config`;
-- синтаксис Nginx;
-- Matrix Client API;
-- `.well-known/matrix/server` и `.well-known/matrix/client`;
-- `mas-cli doctor`, если MAS установлен;
-- состояние контейнеров.
+## Скриншоты
 
-Полезные ручные команды:
+| Интерактивное меню | Проверка состояния | Автоматизация |
+|---|---|---|
+| ![Меню установщика](docs/assets/menu.svg) | ![Проверки состояния](docs/assets/health.svg) | ![Автоматизация CLI](docs/assets/automation.svg) |
 
-```bash
-cd /root/matrix-server
-docker compose ps
-docker compose logs -f
-curl https://matrix.example.com/_matrix/client/versions
-curl https://example.com/.well-known/matrix/server
-```
-
-## Безопасность
-
-- `.env`, списки федерации, конфигурации с секретами и `credentials.txt` доступны только root;
-- сертификат Coturn обновляется deploy-hook Certbot;
-- контейнерные порты приложений не публикуются в Интернет;
-- перед обновлением создаётся backup;
-- стабильные образы закреплены версиями;
-- не публикуйте `/root/matrix-server` и не передавайте `credentials.txt` третьим лицам;
-- для production ограничьте SSH по ключам и доверенным IP, настройте внешний backup и мониторинг.
-
-## Разработка и проверки
+## Разработка
 
 ```bash
+bash -n install-matrix.sh tests/*.sh scripts/*.sh
+shellcheck --severity=warning -x -e SC1091 install-matrix.sh tests/*.sh scripts/*.sh
 bash tests/static-render.sh
+bash tests/cli.sh
+bash tests/lifecycle.sh
+bash tests/docs.sh
+bash tests/supply-chain.sh
 ```
 
-GitHub Actions запускает Bash syntax check, ShellCheck и рендер всех вариантов Compose/Synapse YAML.
+CI дополнительно запускает yamllint, markdownlint, Trivy, Gitleaks, zizmor и матрицу из шести дистрибутивов. E2E workflow предназначен для отдельной одноразовой VM с настоящими DNS-записями.
 
-## Отказ от ответственности
+## Лицензия
 
-Скрипт изменяет Docker, Nginx, Certbot, UFW и systemd на сервере. Перед production-развёртыванием проверьте конфигурацию, резервное копирование и требования вашей организации.
+[MIT](LICENSE). Об уязвимостях сообщайте по инструкции из [SECURITY.ru.md](SECURITY.ru.md), а не через публичный issue.
