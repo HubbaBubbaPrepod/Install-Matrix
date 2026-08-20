@@ -32,13 +32,7 @@ language_pairs = (
     ("SUPPORT.md", "SUPPORT.ru.md"),
     ("CHANGELOG.md", "CHANGELOG.ru.md"),
     ("docs/ARCHITECTURE.md", "docs/ARCHITECTURE.ru.md"),
-    ("docs/COMMUNITY.md", "docs/COMMUNITY.ru.md"),
-    ("docs/ECOSYSTEM.md", "docs/ECOSYSTEM.ru.md"),
     ("docs/FAQ.md", "docs/FAQ.ru.md"),
-    ("docs/RELEASING.md", "docs/RELEASING.ru.md"),
-    ("docs/REPOSITORY_SETTINGS.md", "docs/REPOSITORY_SETTINGS.ru.md"),
-    ("docs/TUTORIAL.md", "docs/TUTORIAL.ru.md"),
-    ("docs/VIDEO_SCRIPT.md", "docs/VIDEO_SCRIPT.ru.md"),
 )
 for english_name, russian_name in language_pairs:
     english = root / english_name
