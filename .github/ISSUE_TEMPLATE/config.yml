@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Уязвимость безопасности
+    url: https://github.com/HubbaBubbaPrepod/Install-Matrix/security/advisories/new
+    about: Сообщайте приватно; никогда не публикуйте секреты в issue.
+  - name: Инструкция по поддержке
+    url: https://github.com/HubbaBubbaPrepod/Install-Matrix/blob/main/SUPPORT.ru.md
+    about: Перед вопросом прочитайте инструкцию по диагностике и удалению приватных данных.

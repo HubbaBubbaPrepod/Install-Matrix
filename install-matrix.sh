@@ -1,14 +1,27 @@
 #!/bin/bash
 
 # ============================================================
-#  MATRIX SERVER INSTALLER v4.0
+#  MATRIX SERVER INSTALLER v4.1.0
 #  by zxchubbabubba
-#  Поддерживает: Ubuntu 20.04+ / Debian 11+
+#  Поддерживает: Ubuntu 20.04/22.04/24.04, Debian 11/12/13 (amd64)
 #  Меню: Matrix, MAS, LiveKit, federation, admin UIs, ntfy, Xray, backup
 # ============================================================
 
 set -Ee -o pipefail
 umask 077
+
+INSTALLER_VERSION="4.1.0"
+INSTALLER_REPOSITORY="https://github.com/HubbaBubbaPrepod/Install-Matrix"
+NON_INTERACTIVE=false
+ASSUME_YES=false
+DRY_RUN=false
+ALLOW_OPEN_REGISTRATION=false
+CLI_COMMAND="menu"
+RESTORE_SOURCE=""
+UNINSTALL_MODE=""
+IMAGE_POLICY="managed"
+RUNTIME_DIR=""
+declare -A USER_OVERRIDES=()
 
 # ════════════════════════════════════════
 #  ЦВЕТА
@@ -38,16 +51,23 @@ FEDERATION_FILE="$MATRIX_DIR/federation-domains.txt"
 BACKUP_ROOT="$MATRIX_DIR/data/backups"
 
 # Проверенные стабильные версии на 2026-08-14. Их можно переопределить в .env.
-POSTGRES_IMAGE_DEFAULT="postgres:16.15-alpine"
-SYNAPSE_IMAGE_DEFAULT="ghcr.io/element-hq/synapse:v1.158.0"
-COTURN_IMAGE_DEFAULT="coturn/coturn:4.17.2-r0"
-MAS_IMAGE_DEFAULT="ghcr.io/element-hq/matrix-authentication-service:1.22.0"
-LIVEKIT_IMAGE_DEFAULT="livekit/livekit-server:v1.13.5"
-LK_JWT_IMAGE_DEFAULT="ghcr.io/element-hq/lk-jwt-service:0.5.0"
-KETESA_IMAGE_DEFAULT="ghcr.io/etkecc/ketesa:v1.4.0"
-ELEMENT_ADMIN_IMAGE_DEFAULT="oci.element.io/element-admin:0.1.12"
-NTFY_IMAGE_DEFAULT="binwiederhier/ntfy:v2.27.0"
+POSTGRES_IMAGE_DEFAULT="postgres:16.15-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685"
+SYNAPSE_IMAGE_DEFAULT="ghcr.io/element-hq/synapse:v1.158.0@sha256:5f868df1f5772907c6dbe973a9b69ab530a5d6bb317c011a3788f7ad78eb1292"
+COTURN_IMAGE_DEFAULT="coturn/coturn:4.17.2-r0@sha256:aa68aab64a3b929d57fc2924c98ea447bf996cf8dade2508e7b71eaf23f1f14e"
+MAS_IMAGE_DEFAULT="ghcr.io/element-hq/matrix-authentication-service:1.22.0@sha256:8cb319ec41706adc1ed8b5b63e1de2f067073cc33a304686226f658f5e83c8b3"
+LIVEKIT_IMAGE_DEFAULT="livekit/livekit-server:v1.13.5@sha256:3497163e15c48fef6e7830c78716f9e9d5edc28abf7aa90b61c86e93bbc306b1"
+LK_JWT_IMAGE_DEFAULT="ghcr.io/element-hq/lk-jwt-service:0.5.0@sha256:29918567e6b7cd920e2853b4cd6848ce01b79947c3d19a9f1ed5b74f0a2a88bf"
+KETESA_IMAGE_DEFAULT="ghcr.io/etkecc/ketesa:v1.4.0@sha256:ec8216e940f9b1490539bff8dde303846a4809b17f6c5ad31603701a3f575c3e"
+ELEMENT_ADMIN_IMAGE_DEFAULT="oci.element.io/element-admin:0.1.12@sha256:01ecadf363e5729dcd6e3606389cfbd08a3171cf8bf5efc68e54290112048f7d"
+NTFY_IMAGE_DEFAULT="binwiederhier/ntfy:v2.27.0@sha256:f2419f405127afa868f10985c1a41449e673477cee1eb19994339a5ae8b592e7"
 XRAY_VERSION_DEFAULT="v26.3.27"
+# Immutable upstream revision. Update it deliberately and record the change in CHANGELOG.md.
+XRAY_INSTALL_COMMIT="e741a4f56d368afbb9e5be3361b40c4552d3710d"
+XRAY_INSTALL_URL="https://raw.githubusercontent.com/XTLS/Xray-install/${XRAY_INSTALL_COMMIT}/install-release.sh"
+XRAY_INSTALL_SHA256="7f70c95f6b418da8b4f4883343d602964915e28748993870fd554383afdbe555"
+XRAY_GEO_RELEASE="202608171005"
+XRAY_GEOIP_SHA256="22c21a664cecd0702b61dba17a903b44fabad7b4458900fa19625b297cf62541"
+XRAY_GEOSITE_SHA256="76fdbe01687a6cc7683b50c38ceea84941458e8371d215918daf555665a537cd"
 
 # ════════════════════════════════════════
 #  HELPERS
@@ -76,8 +96,10 @@ run_spinner() {
     local msg="$1"; shift
     local frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏')
     local i=0
+    local log_file
+    log_file=$(mktemp "${RUNTIME_DIR:-/tmp}/command.XXXXXX")
 
-    "$@" >/tmp/matrix_cmd.log 2>&1 &
+    "$@" >"$log_file" 2>&1 &
     local pid=$!
 
     while kill -0 "$pid" 2>/dev/null; do
@@ -89,12 +111,20 @@ run_spinner() {
     if ! wait "$pid"; then
         printf "\r  ${BRED}✗${NC}  ${RED}%s — ошибка!${NC}\n\n" "$msg"
         echo -e "${DIM}"
-        tail -25 /tmp/matrix_cmd.log
+        tail -25 "$log_file"
         echo -e "${NC}"
+        rm -f -- "$log_file"
         return 1
     fi
 
+    rm -f -- "$log_file"
     printf "\r  ${BGREEN}✓${NC}  ${WHITE}%s${NC}                    \n" "$msg"
+}
+
+initialize_runtime_dir() {
+    RUNTIME_DIR=$(mktemp -d /tmp/install-matrix.XXXXXX)
+    chmod 700 "$RUNTIME_DIR"
+    trap '[[ -n "${RUNTIME_DIR:-}" && "$RUNTIME_DIR" == /tmp/install-matrix.* ]] && rm -rf -- "$RUNTIME_DIR"' EXIT
 }
 
 wait_for_url() {
@@ -139,6 +169,46 @@ wait_for_http_status() {
 generate_secret() {
     local length="${1:-32}"
     openssl rand -hex "$(( (length + 1) / 2 ))" | cut -c1-"$length"
+}
+
+confirm_action() {
+    local prompt="$1"
+    if [[ "$ASSUME_YES" == "true" ]]; then
+        return 0
+    fi
+    [[ "$NON_INTERACTIVE" == "false" ]] \
+        || log_error "$prompt: требуется --yes"
+    local answer
+    echo -ne "  ${YELLOW}$prompt [y/N]: ${NC}"
+    read -r answer
+    [[ "$answer" =~ ^[YyДд]$ ]]
+}
+
+validate_registration_mode() {
+    case "${REGISTRATION_MODE:-closed}" in
+        closed|token) return 0 ;;
+        open)
+            [[ "$ALLOW_OPEN_REGISTRATION" == "true" ]] \
+                || log_error "Открытая регистрация требует --allow-open-registration или интерактивного подтверждения"
+            ;;
+        *) log_error "REGISTRATION_MODE должен быть closed, token или open" ;;
+    esac
+}
+
+set_mas_registration_flags() {
+    MAS_REGISTRATION_ENABLED=false
+    MAS_REGISTRATION_TOKEN_REQUIRED=false
+    case "${REGISTRATION_MODE:-closed}" in
+        closed) ;;
+        token)
+            MAS_REGISTRATION_ENABLED=true
+            MAS_REGISTRATION_TOKEN_REQUIRED=true
+            ;;
+        open)
+            MAS_REGISTRATION_ENABLED=true
+            ;;
+        *) log_error "REGISTRATION_MODE должен быть closed, token или open" ;;
+    esac
 }
 
 run_with_retry() {
@@ -212,6 +282,51 @@ set_image_defaults() {
     XRAY_VERSION="${XRAY_VERSION:-$XRAY_VERSION_DEFAULT}"
 }
 
+load_config_file() {
+    local file="$1" line key value
+    [[ -f "$file" ]] || log_error "Файл конфигурации не найден: $file"
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        line="${line%$'\r'}"
+        [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+        [[ "$line" =~ ^([A-Z][A-Z0-9_]*)=(.*)$ ]] \
+            || log_error "Некорректная строка в $file: $line"
+        key="${BASH_REMATCH[1]}"
+        value="${BASH_REMATCH[2]}"
+        if [[ "$value" == \"*\" && "$value" == *\" ]]; then
+            value="${value:1:${#value}-2}"
+        elif [[ "$value" == \'*\' && "$value" == *\' ]]; then
+            value="${value:1:${#value}-2}"
+        fi
+        case "$key" in
+            SERVER_NAME|DOMAIN|ADMIN_EMAIL|EXTERNAL_IP|DB_PASSWORD|REGISTRATION_MODE|FEDERATION_MODE|MAX_UPLOAD_SIZE|REMOTE_MEDIA_LIFETIME|PRESENCE_ENABLED|RETENTION_ENABLED|RETENTION_DEFAULT_MIN_LIFETIME|RETENTION_DEFAULT_MAX_LIFETIME|LOCAL_MEDIA_LIFETIME|MAS_DOMAIN|LIVEKIT_DOMAIN|KETESA_DOMAIN|ELEMENT_ADMIN_DOMAIN|NTFY_DOMAIN|NTFY_ADMIN_USER|PROXY_ENABLED|CONTAINER_PROXY_URL|POSTGRES_IMAGE|SYNAPSE_IMAGE|COTURN_IMAGE|MAS_IMAGE|LIVEKIT_IMAGE|LK_JWT_IMAGE|KETESA_IMAGE|ELEMENT_ADMIN_IMAGE|NTFY_IMAGE|XRAY_VERSION|IMAGE_POLICY)
+                printf -v "$key" '%s' "$value"
+                USER_OVERRIDES["$key"]="$value"
+                ;;
+            ENABLE_MAS|ENABLE_LIVEKIT|ENABLE_KETESA|ENABLE_ELEMENT_ADMIN|ENABLE_NTFY|ADMIN_USER|ADMIN_PASSWORD_FILE)
+                printf -v "$key" '%s' "$value"
+                USER_OVERRIDES["$key"]="$value"
+                ;;
+            *) log_error "Неизвестный параметр в $file: $key" ;;
+        esac
+    done < "$file"
+    set_image_defaults
+}
+
+validate_non_interactive_config() {
+    [[ -n "${SERVER_NAME:-}" ]] || log_error "В config требуется SERVER_NAME"
+    [[ -n "${DOMAIN:-}" ]] || log_error "В config требуется DOMAIN"
+    [[ -n "${ADMIN_EMAIL:-}" ]] || log_error "В config требуется ADMIN_EMAIL"
+    is_valid_domain "$SERVER_NAME" || log_error "Некорректный SERVER_NAME: $SERVER_NAME"
+    is_valid_domain "$DOMAIN" || log_error "Некорректный DOMAIN: $DOMAIN"
+    [[ "$ADMIN_EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] \
+        || log_error "Некорректный ADMIN_EMAIL"
+    validate_registration_mode
+    case "${FEDERATION_MODE:-restricted}" in
+        restricted|public) ;;
+        *) log_error "FEDERATION_MODE должен быть restricted или public" ;;
+    esac
+}
+
 detect_components() {
     HAS_MAS=false
     HAS_LIVEKIT=false
@@ -220,8 +335,8 @@ detect_components() {
     HAS_NTFY=false
     [[ -n "${MAS_DOMAIN:-}" && -f "$MATRIX_DIR/data/mas/config.yaml" ]] && HAS_MAS=true
     [[ -n "${LIVEKIT_DOMAIN:-}" && -f "$MATRIX_DIR/data/livekit/livekit.yaml" ]] && HAS_LIVEKIT=true
-    [[ -n "${KETESA_DOMAIN:-}" ]] && HAS_KETESA=true
-    [[ -n "${ELEMENT_ADMIN_DOMAIN:-}" ]] && HAS_ELEMENT_ADMIN=true
+    [[ -n "${KETESA_DOMAIN:-}" && -f "$MATRIX_DIR/data/ketesa/config.json" ]] && HAS_KETESA=true
+    [[ -n "${ELEMENT_ADMIN_DOMAIN:-}" && -f "$MATRIX_DIR/data/element-admin/.installed" ]] && HAS_ELEMENT_ADMIN=true
     [[ -n "${NTFY_DOMAIN:-}" && -f "$MATRIX_DIR/data/ntfy/server.yml" ]] && HAS_NTFY=true
     return 0
 }
@@ -273,19 +388,22 @@ check_system() {
 
     DISTRO=$(lsb_release -is | tr '[:upper:]' '[:lower:]')
     VERSION=$(lsb_release -rs | cut -d. -f1)
+    ARCHITECTURE=$(dpkg --print-architecture)
+    [[ "$ARCHITECTURE" == "amd64" ]] \
+        || log_error "Архитектура $ARCHITECTURE пока не проходит release E2E; поддерживается amd64"
 
     case "$DISTRO" in
         ubuntu)
-            if [[ "$VERSION" -lt 20 ]]; then
-                log_error "Требуется Ubuntu 20.04 или новее."
-            fi
-            log_ok "ОС: Ubuntu $VERSION"
+            case "$VERSION" in
+                20|22|24) log_ok "ОС: Ubuntu $VERSION ($ARCHITECTURE)" ;;
+                *) log_error "Непроверенная Ubuntu $VERSION. Поддерживаются 20.04, 22.04 и 24.04." ;;
+            esac
             ;;
         debian)
-            if [[ "$VERSION" -lt 11 ]]; then
-                log_error "Требуется Debian 11 (bullseye) или новее."
-            fi
-            log_ok "ОС: Debian $VERSION"
+            case "$VERSION" in
+                11|12|13) log_ok "ОС: Debian $VERSION ($ARCHITECTURE)" ;;
+                *) log_error "Непроверенный Debian $VERSION. Поддерживаются 11, 12 и 13." ;;
+            esac
             ;;
         *)
             log_error "Неподдерживаемый дистрибутив: $DISTRO. Используйте Ubuntu или Debian."
@@ -343,13 +461,15 @@ install_base_packages() {
     log_step "Установка Docker (официальный репозиторий)"
 
     # Добавляем ключ Docker
+    local docker_key_file
+    docker_key_file=$(mktemp "${RUNTIME_DIR:-/tmp}/docker-repository.XXXXXX.gpg")
     run_with_retry "Загрузка ключа Docker" \
         curl -fsSL "https://download.docker.com/linux/$DISTRO/gpg" \
-        -o /tmp/docker-repository.gpg
+        -o "$docker_key_file"
     gpg --batch --yes --dearmor \
-        -o /usr/share/keyrings/docker-archive-keyring.gpg /tmp/docker-repository.gpg
+        -o /usr/share/keyrings/docker-archive-keyring.gpg "$docker_key_file"
     chmod 0644 /usr/share/keyrings/docker-archive-keyring.gpg
-    rm -f /tmp/docker-repository.gpg
+    rm -f -- "$docker_key_file"
 
     # Добавляем репозиторий
     DOCKER_ARCH=$(dpkg --print-architecture)
@@ -497,17 +617,37 @@ EOF
 setup_ufw() {
     log_step "Брандмауэр (UFW)"
 
+    local ssh_port=22 ufw_status
+    if [[ -n "${SSH_CONNECTION:-}" ]]; then
+        ssh_port=$(awk '{print $4}' <<<"$SSH_CONNECTION")
+    elif command -v sshd >/dev/null 2>&1; then
+        ssh_port=$(sshd -T 2>/dev/null | awk '$1 == "port" {print $2; exit}')
+        ssh_port="${ssh_port:-22}"
+    fi
+    [[ "$ssh_port" =~ ^[0-9]{1,5}$ && "$ssh_port" -ge 1 && "$ssh_port" -le 65535 ]] \
+        || log_error "Не удалось безопасно определить SSH-порт: $ssh_port"
+
     for rule in \
-        "22/tcp" "80/tcp" "443/tcp" \
+        "$ssh_port/tcp" "80/tcp" "443/tcp" \
         "3478/tcp" "3478/udp" \
         "5349/tcp" "5349/udp" \
         "49152:49252/udp"
     do
         ufw allow "$rule" >/dev/null 2>&1
     done
-    ufw --force enable >/dev/null 2>&1
 
-    log_ok "Открыты порты: 22, 80, 443, 3478, 5349, 49152-49252"
+    ufw_status=$(ufw status 2>/dev/null | head -n1 || true)
+    if [[ "$ufw_status" != "Status: active" ]]; then
+        log_warn "UFW сейчас выключен. SSH-порт $ssh_port/tcp уже добавлен в правила."
+        if confirm_action "Включить UFW"; then
+            ufw --force enable >/dev/null 2>&1
+        else
+            log_warn "UFW оставлен выключенным; правила сохранены"
+            return
+        fi
+    fi
+
+    log_ok "Открыты порты: SSH $ssh_port, 80, 443, 3478, 5349, 49152-49252"
 }
 
 # ════════════════════════════════════════
@@ -518,8 +658,13 @@ load_env() {
         chmod 600 "$ENV_FILE"
         set -a
         # Файл создаётся только этим скриптом, принадлежит root и имеет режим 0600.
+        # shellcheck source=/dev/null
         source "$ENV_FILE"
         set +a
+        local override_key
+        for override_key in "${!USER_OVERRIDES[@]}"; do
+            printf -v "$override_key" '%s' "${USER_OVERRIDES[$override_key]}"
+        done
         SERVER_NAME="${SERVER_NAME:-${DOMAIN:-}}"
         DOMAIN="${DOMAIN:-$SERVER_NAME}"
         ADMIN_EMAIL="${ADMIN_EMAIL:-admin@$DOMAIN}"
@@ -535,6 +680,7 @@ load_env() {
         RETENTION_DEFAULT_MIN_LIFETIME="${RETENTION_DEFAULT_MIN_LIFETIME:-1d}"
         RETENTION_DEFAULT_MAX_LIFETIME="${RETENTION_DEFAULT_MAX_LIFETIME:-365d}"
         LOCAL_MEDIA_LIFETIME="${LOCAL_MEDIA_LIFETIME:-30d}"
+        IMAGE_POLICY="${IMAGE_POLICY:-managed}"
         set_image_defaults
     else
         log_error "Файл .env не найден. Сначала установите Matrix (пункт 1)."
@@ -546,7 +692,7 @@ save_env() {
     local env_tmp
     env_tmp=$(mktemp "$MATRIX_DIR/.env.tmp.XXXXXX")
     {
-        echo "# MATRIX SERVER ENVIRONMENT — generated by Install-Matrix v4.0"
+        echo "# MATRIX SERVER ENVIRONMENT — generated by Install-Matrix v$INSTALLER_VERSION"
         printf 'SERVER_NAME=%q\n' "$SERVER_NAME"
         printf 'DOMAIN=%q\n' "$DOMAIN"
         printf 'ADMIN_EMAIL=%q\n' "$ADMIN_EMAIL"
@@ -583,6 +729,7 @@ save_env() {
         printf 'ELEMENT_ADMIN_IMAGE=%q\n' "$ELEMENT_ADMIN_IMAGE"
         printf 'NTFY_IMAGE=%q\n' "$NTFY_IMAGE"
         printf 'XRAY_VERSION=%q\n' "$XRAY_VERSION"
+        printf 'IMAGE_POLICY=%q\n' "${IMAGE_POLICY:-managed}"
         printf 'RETENTION_ENABLED=%q\n' "${RETENTION_ENABLED:-true}"
         printf 'RETENTION_DEFAULT_MIN_LIFETIME=%q\n' "${RETENTION_DEFAULT_MIN_LIFETIME:-1d}"
         printf 'RETENTION_DEFAULT_MAX_LIFETIME=%q\n' "${RETENTION_DEFAULT_MAX_LIFETIME:-365d}"
@@ -916,7 +1063,7 @@ registration_shared_secret: "$REG_SHARED_SECRET"
 report_stats: false
 EOF
 
-    # Безопасная регистрация. Открытая регистрация без проверки намеренно не поддерживается.
+    # Три режима регистрации; open включается только после явного подтверждения риска.
     if [[ "$has_mas" == "true" ]]; then
         echo "enable_registration: false" >> "$HOMESERVER_FILE"
         echo "enable_registration_without_verification: false" >> "$HOMESERVER_FILE"
@@ -999,7 +1146,9 @@ EOF
         fi
     fi
 
-    chown 991:991 "$(dirname "$HOMESERVER_FILE")" "$HOMESERVER_FILE"
+    if [[ "${SKIP_OWNERSHIP:-false}" != "true" ]]; then
+        chown 991:991 "$(dirname "$HOMESERVER_FILE")" "$HOMESERVER_FILE"
+    fi
     chmod 750 "$(dirname "$HOMESERVER_FILE")"
     chmod 640 "$HOMESERVER_FILE"
     log_ok "homeserver.yaml сгенерирован"
@@ -1038,42 +1187,59 @@ install_matrix() {
         return
     fi
 
-    # Запрос данных
-    echo ""
-    echo -e "  ${DIM}Основной домен определяет Matrix ID: @user:example.com.${NC}"
-    SERVER_NAME=$(read_domain "Основной домен" "example.com")
-    DOMAIN=$(read_domain "Домен Matrix API" "matrix.$SERVER_NAME")
+    if [[ "$NON_INTERACTIVE" == "true" ]]; then
+        validate_non_interactive_config
+    else
+        echo ""
+        echo -e "  ${DIM}Основной домен определяет Matrix ID: @user:example.com.${NC}"
+        SERVER_NAME=$(read_domain "Основной домен" "example.com")
+        DOMAIN=$(read_domain "Домен Matrix API" "matrix.$SERVER_NAME")
 
-    echo ""
-    echo -ne "  ${CYAN}▶${NC}  Email для Let's Encrypt: "
-    read -r ADMIN_EMAIL
-    [[ "$ADMIN_EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] \
-        || log_error "Некорректный email для Let's Encrypt"
+        echo ""
+        echo -ne "  ${CYAN}▶${NC}  Email для Let's Encrypt: "
+        read -r ADMIN_EMAIL
+        [[ "$ADMIN_EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] \
+            || log_error "Некорректный email для Let's Encrypt"
 
-    echo ""
-    echo -e "  ${DIM}Регистрация: 1 — закрытая (рекомендуется), 2 — только по токену${NC}"
-    echo -ne "  ${CYAN}▶${NC}  Режим [1]: "
-    read -r REG_CHOICE
-    [[ "$REG_CHOICE" == "2" ]] && REGISTRATION_MODE="token" || REGISTRATION_MODE="closed"
-    # Безопасный режим по умолчанию: исходящая федерация закрыта до явного
-    # добавления доменов через меню или включения публичного режима.
-    FEDERATION_MODE="restricted"
-    MAX_UPLOAD_SIZE="2048M"
-    REMOTE_MEDIA_LIFETIME="14d"
-    PRESENCE_ENABLED="false"
-    PROXY_ENABLED="false"
-    CONTAINER_PROXY_URL=""
-    RETENTION_ENABLED="true"
-    RETENTION_DEFAULT_MIN_LIFETIME="1d"
-    RETENTION_DEFAULT_MAX_LIFETIME="365d"
-    LOCAL_MEDIA_LIFETIME="30d"
+        echo ""
+        echo "  Регистрация: 1 — закрытая, 2 — по токену, 3 — открытая без проверки"
+        echo -ne "  ${CYAN}▶${NC}  Режим [1]: "
+        read -r REG_CHOICE
+        case "${REG_CHOICE:-1}" in
+            1) REGISTRATION_MODE="closed" ;;
+            2) REGISTRATION_MODE="token" ;;
+            3)
+                log_warn "Открытая регистрация без проверки допускает массовое создание аккаунтов и abuse"
+                confirm_action "Я понимаю риск и хочу включить открытую регистрацию" \
+                    || log_error "Открытая регистрация отменена"
+                ALLOW_OPEN_REGISTRATION=true
+                REGISTRATION_MODE="open"
+                ;;
+            *) log_error "Неверный режим регистрации" ;;
+        esac
+    fi
+
+    # Безопасные defaults можно переопределить config-файлом.
+    FEDERATION_MODE="${FEDERATION_MODE:-restricted}"
+    MAX_UPLOAD_SIZE="${MAX_UPLOAD_SIZE:-2048M}"
+    REMOTE_MEDIA_LIFETIME="${REMOTE_MEDIA_LIFETIME:-14d}"
+    PRESENCE_ENABLED="${PRESENCE_ENABLED:-false}"
+    PROXY_ENABLED="${PROXY_ENABLED:-false}"
+    CONTAINER_PROXY_URL="${CONTAINER_PROXY_URL:-}"
+    RETENTION_ENABLED="${RETENTION_ENABLED:-true}"
+    RETENTION_DEFAULT_MIN_LIFETIME="${RETENTION_DEFAULT_MIN_LIFETIME:-1d}"
+    RETENTION_DEFAULT_MAX_LIFETIME="${RETENTION_DEFAULT_MAX_LIFETIME:-365d}"
+    LOCAL_MEDIA_LIFETIME="${LOCAL_MEDIA_LIFETIME:-30d}"
+    IMAGE_POLICY="${IMAGE_POLICY:-managed}"
     set_image_defaults
 
-    echo ""
-    echo -e "  ${DIM}Пароль PostgreSQL (Enter = автогенерация):${NC}"
-    echo -ne "  ${CYAN}▶${NC}  "
-    read -rs DB_PASSWORD
-    echo ""
+    if [[ "$NON_INTERACTIVE" == "false" ]]; then
+        echo ""
+        echo -e "  ${DIM}Пароль PostgreSQL (Enter = автогенерация):${NC}"
+        echo -ne "  ${CYAN}▶${NC}  "
+        read -rs DB_PASSWORD
+        echo ""
+    fi
 
     if [[ -z "$DB_PASSWORD" ]]; then
         DB_PASSWORD=$(generate_secret 24)
@@ -1085,8 +1251,8 @@ install_matrix() {
     fi
 
     # Внешний IP
-    EXTERNAL_IP=$(curl -4 -s --max-time 5 https://ifconfig.me 2>/dev/null \
-               || curl -4 -s --max-time 5 https://api.ipify.org 2>/dev/null)
+    EXTERNAL_IP="${EXTERNAL_IP:-$(curl -4 -s --max-time 5 https://ifconfig.me 2>/dev/null \
+               || curl -4 -s --max-time 5 https://api.ipify.org 2>/dev/null)}"
     [[ -z "$EXTERNAL_IP" ]] && log_error "Не удалось определить внешний IP."
     log_ok "Внешний IP: ${CYAN}$EXTERNAL_IP${NC}"
 
@@ -1237,11 +1403,28 @@ EOF
 
     # Создание администратора
     log_step "Создание администратора"
-    echo ""
-    echo -e "  ${DIM}Введите данные для первого аккаунта:${NC}"
-    echo ""
-    docker compose exec synapse register_new_matrix_user \
-        http://localhost:8008 -c /data/homeserver.yaml --admin
+    if [[ "$NON_INTERACTIVE" == "true" ]]; then
+        if [[ -n "${ADMIN_USER:-}" && -n "${ADMIN_PASSWORD_FILE:-}" ]]; then
+            [[ "$ADMIN_USER" =~ ^[A-Za-z0-9._=-]{1,255}$ ]] \
+                || log_error "Некорректный ADMIN_USER"
+            [[ -f "$ADMIN_PASSWORD_FILE" ]] \
+                || log_error "ADMIN_PASSWORD_FILE не найден: $ADMIN_PASSWORD_FILE"
+            ADMIN_PASSWORD=$(<"$ADMIN_PASSWORD_FILE")
+            [[ ${#ADMIN_PASSWORD} -ge 12 ]] || log_error "Пароль администратора должен содержать минимум 12 символов"
+            docker compose exec -T synapse register_new_matrix_user \
+                http://localhost:8008 -c /data/homeserver.yaml --admin \
+                --user "$ADMIN_USER" --password "$ADMIN_PASSWORD"
+            unset ADMIN_PASSWORD
+        else
+            log_warn "Администратор не создан: задайте ADMIN_USER и ADMIN_PASSWORD_FILE"
+        fi
+    else
+        echo ""
+        echo -e "  ${DIM}Введите данные для первого аккаунта:${NC}"
+        echo ""
+        docker compose exec synapse register_new_matrix_user \
+            http://localhost:8008 -c /data/homeserver.yaml --admin
+    fi
 
     # Сохранение учётных данных
     CREDS_FILE="$MATRIX_DIR/credentials.txt"
@@ -1262,6 +1445,8 @@ Working dir: $MATRIX_DIR
 CREDS
     chmod 600 "$CREDS_FILE"
 
+    run_diagnostics || log_warn "Установка завершена, но часть health checks не пройдена"
+
     # Финальный вывод
     echo ""
     echo ""
@@ -1274,8 +1459,7 @@ CREDS
     echo -e "${BGREEN}  ║${NC}  ${WHITE}Matrix ID:${NC}    ${CYAN}@user:$SERVER_NAME${NC}                                  ║${NC}"
     echo -e "${BGREEN}  ║${NC}  ${WHITE}Matrix API:${NC}   ${CYAN}https://$DOMAIN${NC}                                     ║${NC}"
     echo -e "${BGREEN}  ║                                                                                                  ║${NC}"
-    echo -e "${BGREEN}  ║${NC}  ${YELLOW}Пароль БД:${NC}    ${WHITE}$DB_PASSWORD                                           ║${NC}"
-    echo -e "${BGREEN}  ║${NC}  ${YELLOW}Секрет TURN:${NC}  ${WHITE}$TURN_SECRET                                           ║${NC}"
+    echo -e "${BGREEN}  ║${NC}  ${YELLOW}Секреты не выводятся в терминал; см. защищённый credentials.txt.${NC}                 ║${NC}"
     echo -e "${BGREEN}  ║                                                                                                  ║${NC}"
     echo -e "${BGREEN}  ╠══════════════════════════════════════════════════════════════════════════════════════════════════╣${NC}"
     echo -e "${BGREEN}  ║                                                                                                  ║${NC}"
@@ -1304,6 +1488,8 @@ install_mas() {
     fi
 
     load_env
+    validate_registration_mode
+    set_mas_registration_flags
 
     MIGRATION_MARKER="$MATRIX_DIR/data/mas/.syn2mas-complete"
     if [[ -n "${MAS_DOMAIN:-}" && -n "${MAS_SECRET:-}" \
@@ -1340,8 +1526,13 @@ install_mas() {
         check_domain_points_here "$MAS_DOMAIN"
     else
         # Запрос домена для MAS
-        echo ""
-        MAS_DOMAIN=$(read_domain "Домен MAS" "mas.$SERVER_NAME")
+        if [[ "$NON_INTERACTIVE" == "true" ]]; then
+            [[ -n "${MAS_DOMAIN:-}" ]] || log_error "Для --install-mas требуется MAS_DOMAIN в config"
+            is_valid_domain "$MAS_DOMAIN" || log_error "Некорректный MAS_DOMAIN"
+        else
+            echo ""
+            MAS_DOMAIN=$(read_domain "Домен MAS" "mas.$SERVER_NAME")
+        fi
         check_domain_points_here "$MAS_DOMAIN"
         log_ok "Домен MAS: ${CYAN}$MAS_DOMAIN${NC}"
 
@@ -1430,9 +1621,9 @@ matrix:
   secret: $MAS_SECRET
   endpoint: http://synapse:8008/
 account:
-  password_registration_enabled: true
+  password_registration_enabled: $MAS_REGISTRATION_ENABLED
   password_registration_email_required: false
-  password_registration_token_required: true
+  password_registration_token_required: $MAS_REGISTRATION_TOKEN_REQUIRED
   password_change_allowed: true
   password_recovery_enabled: false
 EOF
@@ -1545,11 +1736,11 @@ EOF
             --config /app/config/config.yaml syn2mas check \
             --synapse-config /data/synapse/homeserver.yaml \
             --synapse-database-uri "postgresql://synapse:${DB_PASSWORD:-}@postgres:5432/synapse" \
-            >/tmp/syn2mas-check.log 2>&1
+            >"$RUNTIME_DIR/syn2mas-check.log" 2>&1
         SYN2MAS_CHECK_STATUS=$?
         set -e
         if [[ $SYN2MAS_CHECK_STATUS -ne 0 && $SYN2MAS_CHECK_STATUS -ne 11 ]]; then
-            tail -50 /tmp/syn2mas-check.log
+            tail -50 "$RUNTIME_DIR/syn2mas-check.log"
             log_error "Проверка syn2mas завершилась ошибкой"
         fi
         if [[ $SYN2MAS_CHECK_STATUS -eq 11 ]]; then
@@ -1566,11 +1757,11 @@ EOF
             --config /app/config/config.yaml syn2mas migrate \
             --synapse-config /data/synapse/homeserver.yaml \
             --synapse-database-uri "postgresql://synapse:${DB_PASSWORD:-}@postgres:5432/synapse" \
-            >/tmp/syn2mas-migrate.log 2>&1
+            >"$RUNTIME_DIR/syn2mas-migrate.log" 2>&1
         SYN2MAS_MIGRATE_STATUS=$?
         set -e
         if [[ $SYN2MAS_MIGRATE_STATUS -ne 0 && $SYN2MAS_MIGRATE_STATUS -ne 11 ]]; then
-            tail -50 /tmp/syn2mas-migrate.log
+            tail -50 "$RUNTIME_DIR/syn2mas-migrate.log"
             cp "$BACKUP_DIR/homeserver.yaml" "$HOMESERVER_FILE"
             chown 991:991 "$HOMESERVER_FILE"
             docker compose up -d postgres synapse coturn >/dev/null 2>&1 || true
@@ -1660,16 +1851,19 @@ install_livekit() {
         log_error "MAS не установлен. Сначала установите MAS (пункт 2)."
     fi
 
-    LIVEKIT_ALREADY_INSTALLED=false
     if [[ -n "${LIVEKIT_DOMAIN:-}" && -n "${LIVEKIT_KEY:-}" \
           && -n "${LIVEKIT_SECRET:-}" \
           && -f "$MATRIX_DIR/data/livekit/livekit.yaml" ]]; then
-        LIVEKIT_ALREADY_INSTALLED=true
         log_ok "LiveKit уже установлен; существующие API-ключи будут сохранены"
     else
         # Запрос домена для LiveKit
-        echo ""
-        LIVEKIT_DOMAIN=$(read_domain "Домен LiveKit" "livekit.$SERVER_NAME")
+        if [[ "$NON_INTERACTIVE" == "true" ]]; then
+            [[ -n "${LIVEKIT_DOMAIN:-}" ]] || log_error "Для --install-livekit требуется LIVEKIT_DOMAIN в config"
+            is_valid_domain "$LIVEKIT_DOMAIN" || log_error "Некорректный LIVEKIT_DOMAIN"
+        else
+            echo ""
+            LIVEKIT_DOMAIN=$(read_domain "Домен LiveKit" "livekit.$SERVER_NAME")
+        fi
         RESOLVED_IP=$(getent ahostsv4 "$LIVEKIT_DOMAIN" 2>/dev/null | awk 'NR==1 {print $1}')
         [[ "$RESOLVED_IP" == "$EXTERNAL_IP" ]] \
             || log_error "DNS $LIVEKIT_DOMAIN указывает на '${RESOLVED_IP:-ничего}', ожидался $EXTERNAL_IP"
@@ -1897,18 +2091,18 @@ apply_synapse_config() {
     cp "$HOMESERVER_FILE" "$backup_file"
     regenerate_stack
 
-    if ! docker compose -f "$COMPOSE_FILE" config --quiet >/tmp/matrix-compose-check.log 2>&1; then
+    if ! docker compose -f "$COMPOSE_FILE" config --quiet >"$RUNTIME_DIR/matrix-compose-check.log" 2>&1; then
         cp "$backup_file" "$HOMESERVER_FILE"
         rm -f "$backup_file"
-        tail -30 /tmp/matrix-compose-check.log
+        tail -30 "$RUNTIME_DIR/matrix-compose-check.log"
         log_error "Новый docker-compose.yml некорректен; homeserver.yaml восстановлен"
     fi
 
-    if ! docker compose -f "$COMPOSE_FILE" up -d synapse >/tmp/matrix-synapse-apply.log 2>&1; then
+    if ! docker compose -f "$COMPOSE_FILE" up -d synapse >"$RUNTIME_DIR/matrix-synapse-apply.log" 2>&1; then
         cp "$backup_file" "$HOMESERVER_FILE"
         docker compose -f "$COMPOSE_FILE" restart synapse >/dev/null 2>&1 || true
         rm -f "$backup_file"
-        tail -30 /tmp/matrix-synapse-apply.log
+        tail -30 "$RUNTIME_DIR/matrix-synapse-apply.log"
         log_error "Synapse не принял конфигурацию; выполнен откат"
     fi
 
@@ -2119,6 +2313,9 @@ install_element_admin() {
     write_proxy_vhost "element-admin" "$ELEMENT_ADMIN_DOMAIN" 8084 false
     run_spinner "Запуск Element Admin и MAS" docker compose up -d mas element-admin
     wait_for_url "https://$ELEMENT_ADMIN_DOMAIN/" "Element Admin"
+    mkdir -p "$MATRIX_DIR/data/element-admin"
+    touch "$MATRIX_DIR/data/element-admin/.installed"
+    chmod 600 "$MATRIX_DIR/data/element-admin/.installed"
     log_ok "Element Admin доступен: https://$ELEMENT_ADMIN_DOMAIN"
 }
 
@@ -2127,13 +2324,18 @@ install_ntfy() {
     require_matrix
     local ntfy_new="false"
     local ntfy_password=""
-    if [[ -n "${NTFY_DOMAIN:-}" ]]; then
+    if [[ -n "${NTFY_DOMAIN:-}" && -f "$MATRIX_DIR/data/ntfy/server.yml" ]]; then
         log_warn "ntfy уже настроен; проверяю и восстанавливаю сервис"
     else
         ntfy_new="true"
-        NTFY_DOMAIN=$(read_domain "Домен ntfy" "ntfy.$SERVER_NAME")
-        echo -ne "  ${CYAN}▶${NC}  Имя администратора ntfy [admin]: "
-        read -r NTFY_ADMIN_USER
+        if [[ "$NON_INTERACTIVE" == "true" ]]; then
+            [[ -n "${NTFY_DOMAIN:-}" ]] || log_error "Для ntfy требуется NTFY_DOMAIN в config"
+            is_valid_domain "$NTFY_DOMAIN" || log_error "Некорректный NTFY_DOMAIN"
+        else
+            NTFY_DOMAIN=$(read_domain "Домен ntfy" "ntfy.$SERVER_NAME")
+            echo -ne "  ${CYAN}▶${NC}  Имя администратора ntfy [admin]: "
+            read -r NTFY_ADMIN_USER
+        fi
         NTFY_ADMIN_USER="${NTFY_ADMIN_USER:-admin}"
         [[ "$NTFY_ADMIN_USER" =~ ^[A-Za-z0-9._-]{1,64}$ ]] \
             || log_error "Некорректное имя пользователя ntfy"
@@ -2169,8 +2371,8 @@ EOF
     fi
     if [[ "$ntfy_new" == "true" ]]; then
         if ! docker compose exec -T -e "NTFY_PASSWORD=$ntfy_password" ntfy \
-            ntfy user add --role=admin "$NTFY_ADMIN_USER" >/tmp/ntfy-user.log 2>&1; then
-            tail -20 /tmp/ntfy-user.log
+            ntfy user add --role=admin "$NTFY_ADMIN_USER" >"$RUNTIME_DIR/ntfy-user.log" 2>&1; then
+            tail -20 "$RUNTIME_DIR/ntfy-user.log"
             log_error "Не удалось создать администратора ntfy"
         fi
     fi
@@ -2189,6 +2391,17 @@ EOF
     log_ok "ntfy доступен: https://$NTFY_DOMAIN"
 }
 
+dump_postgres_database() {
+    local service="$1" user="$2" database="$3" output="$4"
+    docker compose exec -T "$service" pg_dump -U "$user" -d "$database" -Fc > "$output"
+}
+
+restore_postgres_database() {
+    local service="$1" user="$2" database="$3" input="$4"
+    docker compose exec -T "$service" pg_restore -U "$user" -d "$database" \
+        --clean --if-exists --no-owner < "$input"
+}
+
 create_backup() {
     log_step "Резервное копирование"
     require_matrix
@@ -2200,10 +2413,10 @@ create_backup() {
     cd "$MATRIX_DIR"
 
     run_spinner "Дамп базы Synapse" \
-        bash -c "docker compose exec -T postgres pg_dump -U synapse -d synapse -Fc > '$backup_dir/synapse.dump'"
+        dump_postgres_database postgres synapse synapse "$backup_dir/synapse.dump"
     if [[ "$HAS_MAS" == "true" ]]; then
         run_spinner "Дамп базы MAS" \
-            bash -c "docker compose exec -T mas-db pg_dump -U mas_user -d mas -Fc > '$backup_dir/mas.dump'"
+            dump_postgres_database mas-db mas_user mas "$backup_dir/mas.dump"
     fi
     local backup_items=(.env docker-compose.yml)
     local backup_item
@@ -2215,10 +2428,278 @@ create_backup() {
         --exclude='./data/backups' --exclude='./data/synapse/media_store' \
         -czf "$backup_dir/configuration.tar.gz" "${backup_items[@]}" \
         || log_error "Не удалось архивировать конфигурацию"
-    sha256sum "$backup_dir"/* > "$backup_dir/SHA256SUMS"
+    (
+        cd "$backup_dir"
+        local checksum_items=(synapse.dump configuration.tar.gz)
+        [[ -f mas.dump ]] && checksum_items+=(mas.dump)
+        sha256sum "${checksum_items[@]}" > SHA256SUMS
+    )
+    {
+        echo "installer_version=$INSTALLER_VERSION"
+        echo "created_at=$(date --iso-8601=seconds)"
+        echo "server_name=$SERVER_NAME"
+        echo "matrix_domain=$DOMAIN"
+        echo "reason=${BACKUP_REASON:-manual}"
+        echo "images:"
+        docker compose config --images 2>/dev/null | sort -u | sed 's/^/  - /'
+    } > "$backup_dir/MANIFEST.txt"
+    (cd "$backup_dir" && sha256sum MANIFEST.txt >> SHA256SUMS)
     chmod -R go-rwx "$backup_dir"
+    LAST_BACKUP_DIR="$backup_dir"
     log_ok "Резервная копия создана: $backup_dir"
     log_warn "Медиа-файлы не включены; каталог media_store следует копировать отдельно"
+}
+
+resolve_backup_dir() {
+    local requested="${1:-}" resolved
+    if [[ -z "$requested" || "$requested" == "latest" ]]; then
+        requested=$(find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -printf '%T@ %p\n' 2>/dev/null \
+            | sort -nr | awk 'NR == 1 {$1=""; sub(/^ /, ""); print}')
+    fi
+    [[ -n "$requested" && -d "$requested" ]] || log_error "Резервная копия не найдена: ${requested:-latest}"
+    resolved=$(realpath -e "$requested")
+    [[ -f "$resolved/SHA256SUMS" && -f "$resolved/configuration.tar.gz" && -f "$resolved/synapse.dump" ]] \
+        || log_error "Неполная резервная копия: $resolved"
+    printf '%s' "$resolved"
+}
+
+verify_backup() {
+    local backup_dir="$1"
+    (cd "$backup_dir" && sha256sum --check --status SHA256SUMS) \
+        || log_error "Проверка SHA256 резервной копии не пройдена"
+    tar -tzf "$backup_dir/configuration.tar.gz" >/dev/null \
+        || log_error "Архив configuration.tar.gz повреждён"
+    validate_backup_archive "$backup_dir/configuration.tar.gz"
+    log_ok "Контрольные суммы резервной копии корректны"
+}
+
+validate_backup_archive() {
+    local archive="$1"
+    if ! python3 - "$archive" <<'PY'
+import pathlib
+import sys
+import tarfile
+
+archive = sys.argv[1]
+allowed_files = {
+    ".env",
+    "docker-compose.yml",
+    "credentials.txt",
+    "federation-domains.txt",
+}
+allowed_prefixes = (
+    "data/synapse",
+    "data/mas",
+    "data/coturn",
+    "data/livekit",
+    "data/ketesa",
+    "data/ntfy",
+)
+
+def allowed(name: str) -> bool:
+    normalized = name.rstrip("/")
+    path = pathlib.PurePosixPath(normalized)
+    if not normalized or path.is_absolute() or ".." in path.parts:
+        return False
+    return normalized in allowed_files or any(
+        normalized == prefix or normalized.startswith(prefix + "/")
+        for prefix in allowed_prefixes
+    )
+
+with tarfile.open(archive, "r:gz") as bundle:
+    for member in bundle.getmembers():
+        if not allowed(member.name):
+            raise SystemExit(f"Недопустимый путь в backup: {member.name}")
+        if not (member.isfile() or member.isdir()):
+            raise SystemExit(f"Недопустимый тип объекта в backup: {member.name}")
+PY
+    then
+        log_error "Архив содержит небезопасные или неожиданные объекты"
+    fi
+}
+
+verify_backup_command() {
+    local backup_dir
+    backup_dir=$(resolve_backup_dir "${RESTORE_SOURCE:-latest}")
+    verify_backup "$backup_dir"
+    log_ok "Резервная копия готова к восстановлению: $backup_dir"
+}
+
+restore_backup() {
+    log_step "Восстановление Matrix"
+    local backup_dir
+    backup_dir=$(resolve_backup_dir "${RESTORE_SOURCE:-latest}")
+    verify_backup "$backup_dir"
+    log_warn "Будут заменены текущие конфигурация и базы данных из $backup_dir"
+    confirm_action "Продолжить восстановление" || { log_warn "Восстановление отменено"; return; }
+
+    if [[ -f "$COMPOSE_FILE" ]]; then
+        cd "$MATRIX_DIR"
+        BACKUP_REASON="pre-restore" create_backup
+        docker compose stop synapse mas lk-jwt-service ketesa element-admin ntfy livekit coturn \
+            >/dev/null 2>&1 || true
+    fi
+
+    mkdir -p "$MATRIX_DIR"
+    tar -xzf "$backup_dir/configuration.tar.gz" -C "$MATRIX_DIR"
+    chmod 600 "$ENV_FILE"
+    load_env
+    detect_components
+    cd "$MATRIX_DIR"
+    regenerate_stack
+    docker compose config --quiet || log_error "Восстановленный Compose некорректен"
+    run_spinner "Запуск PostgreSQL для восстановления" docker compose up -d postgres
+    for _ in {1..60}; do
+        docker compose exec -T postgres pg_isready -U synapse -d synapse >/dev/null 2>&1 && break
+        sleep 1
+    done
+    docker compose exec -T postgres pg_isready -U synapse -d synapse >/dev/null 2>&1 \
+        || log_error "PostgreSQL не готов к восстановлению"
+    run_spinner "Восстановление базы Synapse" \
+        restore_postgres_database postgres synapse synapse "$backup_dir/synapse.dump"
+
+    if [[ "$HAS_MAS" == "true" && -f "$backup_dir/mas.dump" ]]; then
+        run_spinner "Запуск PostgreSQL MAS" docker compose up -d mas-db
+        for _ in {1..60}; do
+            docker compose exec -T mas-db pg_isready -U mas_user -d mas >/dev/null 2>&1 && break
+            sleep 1
+        done
+        run_spinner "Восстановление базы MAS" \
+            restore_postgres_database mas-db mas_user mas "$backup_dir/mas.dump"
+    fi
+
+    run_spinner "Запуск восстановленного стека" docker compose up -d --remove-orphans
+    run_diagnostics
+    log_ok "Восстановление завершено из $backup_dir"
+}
+
+save_update_state() {
+    local state_file="$MATRIX_DIR/.last-update.env"
+    {
+        echo "# Previous image set saved by Install-Matrix v$INSTALLER_VERSION"
+        printf 'POSTGRES_IMAGE=%q\n' "$POSTGRES_IMAGE"
+        printf 'SYNAPSE_IMAGE=%q\n' "$SYNAPSE_IMAGE"
+        printf 'COTURN_IMAGE=%q\n' "$COTURN_IMAGE"
+        printf 'MAS_IMAGE=%q\n' "$MAS_IMAGE"
+        printf 'LIVEKIT_IMAGE=%q\n' "$LIVEKIT_IMAGE"
+        printf 'LK_JWT_IMAGE=%q\n' "$LK_JWT_IMAGE"
+        printf 'KETESA_IMAGE=%q\n' "$KETESA_IMAGE"
+        printf 'ELEMENT_ADMIN_IMAGE=%q\n' "$ELEMENT_ADMIN_IMAGE"
+        printf 'NTFY_IMAGE=%q\n' "$NTFY_IMAGE"
+        printf 'BACKUP_DIR=%q\n' "${LAST_BACKUP_DIR:-}"
+    } > "$state_file"
+    chmod 600 "$state_file"
+}
+
+apply_managed_image_defaults() {
+    [[ "${IMAGE_POLICY:-managed}" == "managed" ]] || return 0
+    POSTGRES_IMAGE="$POSTGRES_IMAGE_DEFAULT"
+    SYNAPSE_IMAGE="$SYNAPSE_IMAGE_DEFAULT"
+    COTURN_IMAGE="$COTURN_IMAGE_DEFAULT"
+    MAS_IMAGE="$MAS_IMAGE_DEFAULT"
+    LIVEKIT_IMAGE="$LIVEKIT_IMAGE_DEFAULT"
+    LK_JWT_IMAGE="$LK_JWT_IMAGE_DEFAULT"
+    KETESA_IMAGE="$KETESA_IMAGE_DEFAULT"
+    ELEMENT_ADMIN_IMAGE="$ELEMENT_ADMIN_IMAGE_DEFAULT"
+    NTFY_IMAGE="$NTFY_IMAGE_DEFAULT"
+}
+
+rollback_services() {
+    log_step "Откат набора контейнеров"
+    require_matrix
+    local state_file="$MATRIX_DIR/.last-update.env"
+    [[ -f "$state_file" ]] || log_error "Состояние предыдущего обновления не найдено"
+    # Этот файл создаётся только установщиком, принадлежит root и имеет mode 0600.
+    # shellcheck source=/dev/null
+    source "$state_file"
+    save_env
+    cd "$MATRIX_DIR"
+    regenerate_stack
+    run_spinner "Загрузка предыдущих образов" docker compose pull
+    run_spinner "Запуск предыдущего набора" docker compose up -d --remove-orphans
+    run_diagnostics
+    log_warn "Откатил образы. Для отката миграций БД используйте restore из BACKUP_DIR=${BACKUP_DIR:-не указан}"
+}
+
+uninstall_matrix() {
+    log_step "Удаление Matrix"
+    [[ -f "$ENV_FILE" ]] || log_error "Установка Matrix не найдена"
+    load_env
+    detect_components
+    local mode="${UNINSTALL_MODE:-}"
+    if [[ -z "$mode" ]]; then
+        echo "  1) Удалить сервисы, сохранить данные"
+        echo "  2) REMOVE EVERYTHING — удалить сервисы и /root/matrix-server"
+        echo -ne "  ${CYAN}▶${NC}  Выбор: "
+        read -r mode
+        [[ "$mode" == "1" ]] && mode="keep-data"
+        [[ "$mode" == "2" ]] && mode="purge"
+    fi
+    [[ "$mode" == "keep-data" || "$mode" == "purge" ]] \
+        || log_error "Режим удаления: keep-data или purge"
+    log_warn "Режим удаления: $mode"
+    confirm_action "Остановить и удалить Matrix-сервисы" || { log_warn "Удаление отменено"; return; }
+
+    local final_backup=""
+    if [[ "$mode" == "purge" ]]; then
+        BACKUP_REASON="pre-uninstall" create_backup
+        final_backup="/root/install-matrix-final-backup-$(date +%Y%m%d-%H%M%S).tar.gz"
+        tar -C "$(dirname "$LAST_BACKUP_DIR")" -czf "$final_backup" "$(basename "$LAST_BACKUP_DIR")"
+        chmod 600 "$final_backup"
+    fi
+
+    cd "$MATRIX_DIR"
+    docker compose down --remove-orphans >/dev/null 2>&1 || true
+    local pattern file
+    for pattern in \
+        "/etc/nginx/sites-available/matrix-${DOMAIN}.conf" \
+        "/etc/nginx/sites-available/mas-${MAS_DOMAIN:-}.conf" \
+        "/etc/nginx/sites-available/livekit-${LIVEKIT_DOMAIN:-}.conf" \
+        "/etc/nginx/sites-available/ketesa-${KETESA_DOMAIN:-}.conf" \
+        "/etc/nginx/sites-available/element-admin-${ELEMENT_ADMIN_DOMAIN:-}.conf" \
+        "/etc/nginx/sites-available/ntfy-${NTFY_DOMAIN:-}.conf"; do
+        [[ "$pattern" == *"-.conf" ]] && continue
+        for file in "$pattern" "${pattern/sites-available/sites-enabled}"; do
+            [[ -e "$file" || -L "$file" ]] && rm -f -- "$file"
+        done
+    done
+    find /etc/nginx/snippets -maxdepth 1 -type f -name "matrix-${DOMAIN}-*.conf" -delete 2>/dev/null || true
+    nginx -t >/dev/null 2>&1 && systemctl reload nginx >/dev/null 2>&1 || true
+    for pattern in "3478/tcp" "3478/udp" "5349/tcp" "5349/udp" \
+        "49152:49252/udp" "7881/tcp" "50000:50100/udp"; do
+        ufw --force delete allow "$pattern" >/dev/null 2>&1 || true
+    done
+
+    if [[ "$mode" == "purge" ]]; then
+        [[ "$MATRIX_DIR" == "/root/matrix-server" ]] \
+            || log_error "Защитная проверка отказалась удалить неожиданный путь: $MATRIX_DIR"
+        rm -rf --one-file-system -- "$MATRIX_DIR"
+        log_ok "Сервисы и данные Matrix удалены. Финальная backup-копия: $final_backup"
+    else
+        log_ok "Сервисы удалены, данные сохранены в $MATRIX_DIR"
+    fi
+}
+
+diagnostic_check() {
+    local description="$1"
+    shift
+    if "$@" >/dev/null 2>&1; then
+        log_ok "$description"
+        return 0
+    fi
+    log_warn "$description — ошибка"
+    return 1
+}
+
+compose_service_running() {
+    local service="$1"
+    docker compose ps --status running --services 2>/dev/null | grep -Fqx "$service"
+}
+
+tls_certificate_valid() {
+    local domain="$1"
+    openssl s_client -connect "$domain:443" -servername "$domain" </dev/null 2>/dev/null \
+        | openssl x509 -checkend 86400 -noout >/dev/null 2>&1
 }
 
 run_diagnostics() {
@@ -2226,13 +2707,28 @@ run_diagnostics() {
     require_matrix
     cd "$MATRIX_DIR"
     local failures=0
-    docker compose config --quiet && log_ok "docker-compose.yml корректен" \
-        || { log_warn "docker-compose.yml содержит ошибку"; failures=$((failures + 1)); }
-    nginx -t >/dev/null 2>&1 && log_ok "Nginx-конфигурация корректна" \
-        || { log_warn "Nginx-конфигурация содержит ошибку"; failures=$((failures + 1)); }
-    curl -fsS --max-time 15 "https://$DOMAIN/_matrix/client/versions" >/dev/null \
-        && log_ok "Matrix Client API отвечает" \
-        || { log_warn "Matrix Client API не отвечает"; failures=$((failures + 1)); }
+    diagnostic_check "Docker Compose config корректен" docker compose config --quiet \
+        || failures=$((failures + 1))
+    diagnostic_check "PostgreSQL запущен" compose_service_running postgres \
+        || failures=$((failures + 1))
+    diagnostic_check "PostgreSQL принимает соединения" \
+        docker compose exec -T postgres pg_isready -U synapse -d synapse \
+        || failures=$((failures + 1))
+    diagnostic_check "Synapse запущен" compose_service_running synapse \
+        || failures=$((failures + 1))
+    diagnostic_check "Coturn запущен" compose_service_running coturn \
+        || failures=$((failures + 1))
+    diagnostic_check "Nginx-конфигурация корректна" nginx -t \
+        || failures=$((failures + 1))
+    diagnostic_check "HTTPS-сертификат Matrix действителен" \
+        tls_certificate_valid "$DOMAIN" \
+        || failures=$((failures + 1))
+    diagnostic_check "Matrix Client API отвечает" \
+        curl -fsS --max-time 15 "https://$DOMAIN/_matrix/client/versions" \
+        || failures=$((failures + 1))
+    diagnostic_check "Matrix Federation API отвечает" \
+        curl -fsS --max-time 15 "https://$DOMAIN/_matrix/federation/v1/version" \
+        || failures=$((failures + 1))
     curl -fsS --max-time 15 "https://$SERVER_NAME/.well-known/matrix/server" \
         | jq -e '."m.server"' >/dev/null \
         && log_ok "server delegation работает" \
@@ -2242,9 +2738,25 @@ run_diagnostics() {
         && log_ok "client discovery работает" \
         || { log_warn "client discovery не работает"; failures=$((failures + 1)); }
     if [[ "$HAS_MAS" == "true" ]]; then
-        docker compose exec -T mas mas-cli --config /app/config/config.yaml doctor >/tmp/mas-doctor.log 2>&1 \
+        diagnostic_check "MAS запущен" compose_service_running mas \
+            || failures=$((failures + 1))
+        docker compose exec -T mas mas-cli --config /app/config/config.yaml doctor >"$RUNTIME_DIR/mas-doctor.log" 2>&1 \
             && log_ok "MAS doctor не нашёл критических ошибок" \
-            || { log_warn "MAS doctor сообщил об ошибке (см. /tmp/mas-doctor.log)"; failures=$((failures + 1)); }
+            || { log_warn "MAS doctor сообщил об ошибке (диагностический лог: $RUNTIME_DIR/mas-doctor.log)"; failures=$((failures + 1)); }
+    fi
+    if [[ "$HAS_LIVEKIT" == "true" ]]; then
+        diagnostic_check "LiveKit запущен" compose_service_running livekit \
+            || failures=$((failures + 1))
+        diagnostic_check "MatrixRTC JWT service запущен" compose_service_running lk-jwt-service \
+            || failures=$((failures + 1))
+        diagnostic_check "MatrixRTC health endpoint отвечает" \
+            curl -fsS --max-time 15 "https://$DOMAIN/lk-jwt/healthz" \
+            || failures=$((failures + 1))
+    fi
+    if [[ "$HAS_NTFY" == "true" ]]; then
+        diagnostic_check "ntfy health endpoint отвечает" \
+            curl -fsS --max-time 15 "https://$NTFY_DOMAIN/v1/health" \
+            || failures=$((failures + 1))
     fi
     docker compose ps
     [[ $failures -eq 0 ]] && log_ok "Все проверки пройдены" \
@@ -2255,31 +2767,53 @@ run_diagnostics() {
 update_services() {
     log_step "Обновление контейнеров"
     require_matrix
-    create_backup
+    BACKUP_REASON="pre-update" create_backup
+    save_update_state
+    apply_managed_image_defaults
+    save_env
     cd "$MATRIX_DIR"
     regenerate_stack
-    run_spinner "Загрузка закреплённых образов" docker compose pull
-    run_spinner "Пересоздание контейнеров" docker compose up -d --remove-orphans
-    run_diagnostics
+    if ! run_spinner "Загрузка закреплённых образов" docker compose pull; then
+        log_warn "Загрузка образов не удалась; возвращаю предыдущий набор"
+        rollback_services
+        return 1
+    fi
+    if ! run_spinner "Пересоздание контейнеров" docker compose up -d --remove-orphans; then
+        log_warn "Запуск обновлённого стека не удался; выполняю rollback"
+        rollback_services
+        return 1
+    fi
+    if ! run_diagnostics; then
+        log_warn "Post-update диагностика не пройдена; выполняю rollback образов"
+        rollback_services
+        return 1
+    fi
+    log_ok "Обновление завершено; backup: $LAST_BACKUP_DIR"
 }
 
 configure_registration() {
     log_step "Режим регистрации"
     require_matrix
     if [[ "$HAS_MAS" == "true" ]]; then
-        log_warn "Регистрацией управляет MAS: регистрация по паролю включена только с токеном"
-        echo "  Токены создаются средствами MAS; открытая регистрация без проверки отключена."
+        log_warn "Регистрацией управляет MAS; выбранный режим будет применён и к MAS, и к Synapse"
+        echo "  Для режима token токены создаются средствами MAS."
     fi
     echo "  1) Закрытая регистрация (рекомендуется)"
     echo "  2) Регистрация только по токену Synapse"
-    echo -ne "  ${CYAN}▶${NC}  Выбор: "
     echo "  3) Открытая регистрация без токена (обычный мессенджер)"
+    echo -ne "  ${CYAN}▶${NC}  Выбор: "
     local registration_choice
     read -r registration_choice
     case "$registration_choice" in
         1) REGISTRATION_MODE="closed" ;;
         2) REGISTRATION_MODE="token" ;;
-        3) REGISTRATION_MODE="open" ;;
+        3)
+            log_warn "Открытая регистрация без проверки допускает массовое создание аккаунтов и abuse"
+            confirm_action "Я понимаю риск и хочу включить открытую регистрацию" \
+                || { log_warn "Изменение отменено"; return; }
+            ALLOW_OPEN_REGISTRATION=true
+            REGISTRATION_MODE="open"
+            ;;
         *) log_error "Неверный выбор" ;;
     esac
     save_env
@@ -2409,8 +2943,10 @@ PY
     install_script=$(mktemp /tmp/xray-install.XXXXXX)
     run_with_retry "Загрузка официального установщика Xray" \
         curl -fsSL --retry 3 \
-        https://github.com/XTLS/Xray-install/raw/main/install-release.sh \
+        "$XRAY_INSTALL_URL" \
         -o "$install_script"
+    echo "$XRAY_INSTALL_SHA256  $install_script" | sha256sum --check --status \
+        || log_error "Checksum установщика Xray не совпал"
     chmod 700 "$install_script"
     run_spinner "Установка Xray $XRAY_VERSION" \
         bash "$install_script" install --version "$XRAY_VERSION"
@@ -2429,12 +2965,20 @@ PY
     # === ДОБАВЛЯЕМ СВЕЖИЕ GEO-БАЗЫ ОТ runetfreedom ===
     log_step "Загрузка актуальных geo-баз для Xray"
     mkdir -p /usr/local/share/xray
+    local geosite_tmp="$RUNTIME_DIR/geosite.dat"
+    local geoip_tmp="$RUNTIME_DIR/geoip.dat"
     run_with_retry "Загрузка geosite.dat (RU)" \
-        curl -fsSL https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geosite.dat \
-        -o /usr/local/share/xray/geosite.dat
+        curl -fsSL "https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/download/$XRAY_GEO_RELEASE/geosite.dat" \
+        -o "$geosite_tmp"
     run_with_retry "Загрузка geoip.dat (RU)" \
-        curl -fsSL https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/latest/download/geoip.dat \
-        -o /usr/local/share/xray/geoip.dat
+        curl -fsSL "https://github.com/runetfreedom/russia-v2ray-rules-dat/releases/download/$XRAY_GEO_RELEASE/geoip.dat" \
+        -o "$geoip_tmp"
+    echo "$XRAY_GEOSITE_SHA256  $geosite_tmp" | sha256sum --check --status \
+        || log_error "SHA256 geosite.dat не совпадает"
+    echo "$XRAY_GEOIP_SHA256  $geoip_tmp" | sha256sum --check --status \
+        || log_error "SHA256 geoip.dat не совпадает"
+    install -m 0644 "$geosite_tmp" /usr/local/share/xray/geosite.dat
+    install -m 0644 "$geoip_tmp" /usr/local/share/xray/geoip.dat
     chown "$xray_service_user" /usr/local/share/xray/geosite.dat /usr/local/share/xray/geoip.dat
     log_ok "Geo-базы обновлены"
 
@@ -2466,8 +3010,210 @@ EOF
 }
 
 # ════════════════════════════════════════
-#  МЕНЮ
+#  CLI И МЕНЮ
 # ════════════════════════════════════════
+show_help() {
+    cat <<EOF
+Install-Matrix v$INSTALLER_VERSION
+
+Использование:
+  sudo ./install-matrix.sh [command] [options]
+
+Команды:
+  menu                    Интерактивное меню (по умолчанию)
+  install                 Установить или восстановить базовый Matrix
+  install-mas             Установить MAS
+  install-livekit         Установить LiveKit/MatrixRTC
+  backup                  Создать проверяемую резервную копию
+  verify-backup [DIR|latest]
+                          Проверить SHA256 и безопасность архива без restore
+  restore [DIR|latest]    Восстановить конфигурацию и базы
+  diagnose                Выполнить post-install health checks
+  update                  Обновить managed-образы с backup и rollback
+  rollback                Вернуть набор образов до последнего update
+  uninstall               Удалить сервисы; данные сохраняются по умолчанию
+  version                 Показать версию
+
+Опции автоматизации:
+  --config FILE                 Прочитать разрешённые KEY=VALUE из файла
+  --non-interactive             Не задавать интерактивных вопросов
+  --yes                         Подтвердить безопасные автоматические действия
+  --dry-run                     Проверить config и отрендерить YAML без изменений ОС
+  --server-name DOMAIN          Домен Matrix ID, например example.com
+  --domain DOMAIN               Публичный Matrix API, например matrix.example.com
+  --admin-email EMAIL           Email Let's Encrypt
+  --admin-user USER             Создать первого администратора
+  --admin-password-file FILE    Прочитать пароль администратора из файла
+  --registration MODE           closed, token или open
+  --allow-open-registration     Явно подтвердить риск режима open
+  --external-ip IPv4            Не определять публичный IPv4 автоматически
+  --keep-data                   Для uninstall: сохранить /root/matrix-server
+  --purge                       Для uninstall: удалить данные после внешнего backup
+  -h, --help                    Показать справку
+  -V, --version                 Показать версию
+
+Примеры:
+  sudo ./install-matrix.sh install --non-interactive --config config.env --yes
+  sudo ./install-matrix.sh backup
+  sudo ./install-matrix.sh verify-backup latest
+  sudo ./install-matrix.sh restore latest
+  sudo ./install-matrix.sh uninstall --keep-data
+
+Документация: $INSTALLER_REPOSITORY
+EOF
+}
+
+require_option_value() {
+    local option="$1" value="${2:-}"
+    [[ -n "$value" && "$value" != --* ]] || log_error "$option требует значение"
+}
+
+parse_cli() {
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            menu|install|install-mas|install-livekit|backup|diagnose|update|rollback|uninstall|version)
+                CLI_COMMAND="$1"; shift ;;
+            restore|verify-backup)
+                CLI_COMMAND="$1"
+                if [[ -n "${2:-}" && "$2" != --* ]]; then RESTORE_SOURCE="$2"; shift; fi
+                shift
+                ;;
+            --install) CLI_COMMAND="install"; shift ;;
+            --install-mas) CLI_COMMAND="install-mas"; shift ;;
+            --install-livekit) CLI_COMMAND="install-livekit"; shift ;;
+            --backup) CLI_COMMAND="backup"; shift ;;
+            --verify-backup)
+                CLI_COMMAND="verify-backup"
+                if [[ -n "${2:-}" && "$2" != --* ]]; then RESTORE_SOURCE="$2"; shift; fi
+                shift
+                ;;
+            --restore)
+                CLI_COMMAND="restore"
+                if [[ -n "${2:-}" && "$2" != --* ]]; then RESTORE_SOURCE="$2"; shift; fi
+                shift
+                ;;
+            --uninstall) CLI_COMMAND="uninstall"; shift ;;
+            --config)
+                require_option_value "$1" "${2:-}"; load_config_file "$2"; shift 2 ;;
+            --non-interactive) NON_INTERACTIVE=true; shift ;;
+            --yes) ASSUME_YES=true; shift ;;
+            --dry-run) DRY_RUN=true; NON_INTERACTIVE=true; shift ;;
+            --allow-open-registration) ALLOW_OPEN_REGISTRATION=true; shift ;;
+            --server-name) require_option_value "$1" "${2:-}"; SERVER_NAME="$2"; USER_OVERRIDES[SERVER_NAME]="$2"; shift 2 ;;
+            --domain) require_option_value "$1" "${2:-}"; DOMAIN="$2"; USER_OVERRIDES[DOMAIN]="$2"; shift 2 ;;
+            --admin-email) require_option_value "$1" "${2:-}"; ADMIN_EMAIL="$2"; USER_OVERRIDES[ADMIN_EMAIL]="$2"; shift 2 ;;
+            --admin-user) require_option_value "$1" "${2:-}"; ADMIN_USER="$2"; USER_OVERRIDES[ADMIN_USER]="$2"; shift 2 ;;
+            --admin-password-file) require_option_value "$1" "${2:-}"; ADMIN_PASSWORD_FILE="$2"; USER_OVERRIDES[ADMIN_PASSWORD_FILE]="$2"; shift 2 ;;
+            --registration) require_option_value "$1" "${2:-}"; REGISTRATION_MODE="$2"; USER_OVERRIDES[REGISTRATION_MODE]="$2"; shift 2 ;;
+            --external-ip) require_option_value "$1" "${2:-}"; EXTERNAL_IP="$2"; USER_OVERRIDES[EXTERNAL_IP]="$2"; shift 2 ;;
+            --keep-data) UNINSTALL_MODE="keep-data"; shift ;;
+            --purge) UNINSTALL_MODE="purge"; shift ;;
+            -h|--help) CLI_COMMAND="help"; shift ;;
+            -V|--version) CLI_COMMAND="version"; shift ;;
+            *) log_error "Неизвестный аргумент: $1. Используйте --help" ;;
+        esac
+    done
+}
+
+dry_run_install() {
+    log_step "Dry run"
+    validate_non_interactive_config
+    local dry_dir has_mas has_livekit has_ketesa has_element_admin has_ntfy
+    dry_dir=$(mktemp -d /tmp/install-matrix-dry-run.XXXXXX)
+    has_mas="${ENABLE_MAS:-false}"
+    has_livekit="${ENABLE_LIVEKIT:-false}"
+    has_ketesa="${ENABLE_KETESA:-false}"
+    has_element_admin="${ENABLE_ELEMENT_ADMIN:-false}"
+    has_ntfy="${ENABLE_NTFY:-false}"
+    [[ "$has_livekit" != "true" || "$has_mas" == "true" ]] \
+        || log_error "ENABLE_LIVEKIT=true требует ENABLE_MAS=true"
+    [[ "$has_element_admin" != "true" || "$has_mas" == "true" ]] \
+        || log_error "ENABLE_ELEMENT_ADMIN=true требует ENABLE_MAS=true"
+
+    MATRIX_DIR="$dry_dir"
+    ENV_FILE="$MATRIX_DIR/.env"
+    COMPOSE_FILE="$MATRIX_DIR/docker-compose.yml"
+    HOMESERVER_FILE="$MATRIX_DIR/data/synapse/homeserver.yaml"
+    FEDERATION_FILE="$MATRIX_DIR/federation-domains.txt"
+    BACKUP_ROOT="$MATRIX_DIR/data/backups"
+    SKIP_OWNERSHIP=true
+    DB_PASSWORD="${DB_PASSWORD:-dry-run-db-password}"
+    REG_SHARED_SECRET="${REG_SHARED_SECRET:-dry-run-registration-secret}"
+    MACAROON_SECRET="${MACAROON_SECRET:-dry-run-macaroon-secret}"
+    FORM_SECRET="${FORM_SECRET:-dry-run-form-secret}"
+    TURN_SECRET="${TURN_SECRET:-dry-run-turn-secret}"
+    MAS_SECRET="${MAS_SECRET:-dry-run-mas-secret}"
+    MAS_DB_PASSWORD="${MAS_DB_PASSWORD:-dry-run-mas-db-password}"
+    LIVEKIT_KEY="${LIVEKIT_KEY:-dry-run-livekit-key}"
+    LIVEKIT_SECRET="${LIVEKIT_SECRET:-dry-run-livekit-secret}"
+    MAX_UPLOAD_SIZE="${MAX_UPLOAD_SIZE:-2048M}"
+    REMOTE_MEDIA_LIFETIME="${REMOTE_MEDIA_LIFETIME:-14d}"
+    LOCAL_MEDIA_LIFETIME="${LOCAL_MEDIA_LIFETIME:-30d}"
+    PRESENCE_ENABLED="${PRESENCE_ENABLED:-false}"
+    RETENTION_ENABLED="${RETENTION_ENABLED:-true}"
+    RETENTION_DEFAULT_MIN_LIFETIME="${RETENTION_DEFAULT_MIN_LIFETIME:-1d}"
+    RETENTION_DEFAULT_MAX_LIFETIME="${RETENTION_DEFAULT_MAX_LIFETIME:-365d}"
+    FEDERATION_MODE="${FEDERATION_MODE:-restricted}"
+    CONTAINER_PROXY_URL="${CONTAINER_PROXY_URL:-}"
+    mkdir -p "$MATRIX_DIR/data/synapse"
+    : > "$FEDERATION_FILE"
+    set_image_defaults
+    generate_compose "$has_mas" "$has_livekit" "$has_ketesa" "$has_element_admin" "$has_ntfy"
+    generate_homeserver "$has_mas" "$has_livekit"
+    if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+        docker compose -f "$COMPOSE_FILE" config --quiet
+    fi
+    python3 - "$COMPOSE_FILE" "$HOMESERVER_FILE" <<'PY'
+import sys
+import yaml
+for filename in sys.argv[1:]:
+    with open(filename, encoding="utf-8") as handle:
+        yaml.safe_load(handle)
+PY
+    log_ok "Dry run пройден: Compose и Synapse YAML корректны"
+    rm -rf -- "$dry_dir"
+}
+
+dispatch_cli() {
+    case "$CLI_COMMAND" in
+        help) show_help; return ;;
+        version) echo "Install-Matrix v$INSTALLER_VERSION"; return ;;
+    esac
+    if [[ "$DRY_RUN" == "true" ]]; then
+        dry_run_install
+        return
+    fi
+    check_system
+    case "$CLI_COMMAND" in
+        menu)
+            while true; do
+                show_menu
+                echo ""
+                echo -ne "  ${DIM}Нажмите Enter для возврата в меню...${NC}"
+                read -r
+            done
+            ;;
+        install)
+            install_matrix
+            if [[ "${ENABLE_MAS:-false}" == "true" ]]; then install_mas; fi
+            if [[ "${ENABLE_LIVEKIT:-false}" == "true" ]]; then install_livekit; fi
+            if [[ "${ENABLE_KETESA:-false}" == "true" ]]; then install_ketesa; fi
+            if [[ "${ENABLE_ELEMENT_ADMIN:-false}" == "true" ]]; then install_element_admin; fi
+            if [[ "${ENABLE_NTFY:-false}" == "true" ]]; then install_ntfy; fi
+            ;;
+        install-mas) install_mas ;;
+        install-livekit) install_livekit ;;
+        backup) create_backup ;;
+        verify-backup) verify_backup_command ;;
+        restore) restore_backup ;;
+        diagnose) run_diagnostics ;;
+        update) update_services ;;
+        rollback) rollback_services ;;
+        uninstall) uninstall_matrix ;;
+        *) log_error "Неизвестная команда: $CLI_COMMAND" ;;
+    esac
+}
+
 show_menu() {
     clear 2>/dev/null || true
     echo ""
@@ -2497,7 +3243,7 @@ show_menu() {
     echo -e "${YELLOW}       ╚══════╝╚══════╝╚═╝  ╚═╝  ╚═══╝  ╚══════╝╚═╝  ╚═╝${NC}"
     echo ""
     echo -e "${BRED}  ════════════════════════════════════════════════════════${NC}"
-    echo -e "     ${DIM}Ubuntu 20.04+ · Debian 11+  ·  version 4.0${NC}"
+    echo -e "     ${DIM}Ubuntu/Debian  ·  version $INSTALLER_VERSION${NC}"
     echo -e "${BRED}  ════════════════════════════════════════════════════════${NC}"
     echo ""
     echo -e "  ${WHITE}Выберите действие:${NC}"
@@ -2515,6 +3261,9 @@ show_menu() {
     echo -e "   ${CYAN}11)${NC}  Создать резервную копию"
     echo -e "   ${CYAN}12)${NC}  Диагностика стека"
     echo -e "   ${CYAN}13)${NC}  Обновить закреплённые контейнеры (с backup)"
+    echo -e "   ${CYAN}14)${NC}  Восстановить из резервной копии"
+    echo -e "   ${CYAN}15)${NC}  Откатить контейнеры после обновления"
+    echo -e "   ${CYAN}16)${NC}  Удалить Matrix (сохранить данные или удалить всё)"
     echo -e "    ${CYAN}0)${NC}  Выход"
     echo ""
     echo -ne "  ${CYAN}▶${NC}  "
@@ -2533,6 +3282,9 @@ show_menu() {
         11) create_backup ;;
         12) run_diagnostics ;;
         13) update_services ;;
+        14) RESTORE_SOURCE="latest"; restore_backup ;;
+        15) rollback_services ;;
+        16) uninstall_matrix ;;
         0) echo -e "  ${GREEN}Выход.${NC}"; exit 0 ;;
         *) echo -e "  ${RED}Неверный выбор.${NC}"; sleep 1 ;;
     esac
@@ -2543,11 +3295,7 @@ show_menu() {
 # ════════════════════════════════════════
 if [[ -z "${BASH_SOURCE[0]:-}" || "${BASH_SOURCE[0]}" == "$0" \
       || "${BASH_SOURCE[0]}" == "/dev/stdin" ]]; then
-    check_system
-    while true; do
-        show_menu
-        echo ""
-        echo -ne "  ${DIM}Нажмите Enter для возврата в меню...${NC}"
-        read -r
-    done
+    initialize_runtime_dir
+    parse_cli "$@"
+    dispatch_cli
 fi

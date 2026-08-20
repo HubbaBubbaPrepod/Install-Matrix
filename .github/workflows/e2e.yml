@@ -1,0 +1,32 @@
+name: E2E deployment
+
+on:
+  workflow_dispatch:
+    inputs:
+      restore_test:
+        description: Run backup and restore after deployment
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    # The runner must be a disposable Ubuntu/Debian VM with dedicated DNS records.
+    runs-on: [self-hosted, linux, x64, install-matrix-e2e]
+    environment: e2e
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Deploy on a clean VM
+        run: sudo bash install-matrix.sh install --non-interactive --config /etc/install-matrix/e2e.env --yes
+      - name: Health checks
+        run: sudo bash install-matrix.sh diagnose
+      - name: Backup and restore drill
+        if: ${{ inputs.restore_test }}
+        run: |
+          sudo bash install-matrix.sh backup
+          sudo bash install-matrix.sh restore latest --non-interactive --yes

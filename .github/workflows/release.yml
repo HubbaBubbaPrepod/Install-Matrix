@@ -1,0 +1,39 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate tag and test
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          test "v$(bash install-matrix.sh --version | awk '{print $2}' | sed 's/^v//')" = "$RELEASE_TAG"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq shellcheck python3-yaml
+          bash -n install-matrix.sh tests/*.sh scripts/*.sh
+          shellcheck --severity=warning -x -e SC1091 install-matrix.sh tests/*.sh scripts/*.sh
+          bash tests/static-render.sh
+          bash tests/cli.sh
+          bash tests/lifecycle.sh
+          bash tests/docs.sh
+          bash tests/supply-chain.sh
+      - name: Build release assets
+        run: bash scripts/build-release.sh dist
+      - name: Create immutable GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" dist/* \
+            --verify-tag --generate-notes --title "$RELEASE_TAG — Install-Matrix"
