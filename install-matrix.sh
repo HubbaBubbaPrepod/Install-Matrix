@@ -3,7 +3,7 @@
 # ============================================================
 #  MATRIX SERVER INSTALLER v4.1.0
 #  by zxchubbabubba
-#  Поддерживает: Ubuntu 20.04/22.04/24.04, Debian 11/12/13 (amd64)
+#  Поддерживает: Ubuntu 20.04/22.04/24.04/26.04, Debian 11/12/13 (amd64)
 #  Меню: Matrix, MAS, LiveKit, federation, admin UIs, ntfy, Xray, backup
 # ============================================================
 
@@ -321,7 +321,7 @@ validate_non_interactive_config() {
     [[ "$ADMIN_EMAIL" =~ ^[^[:space:]@]+@[^[:space:]@]+\.[^[:space:]@]+$ ]] \
         || log_error "Некорректный ADMIN_EMAIL"
     validate_registration_mode
-    case "${FEDERATION_MODE:-restricted}" in
+    case "${FEDERATION_MODE:-public}" in
         restricted|public) ;;
         *) log_error "FEDERATION_MODE должен быть restricted или public" ;;
     esac
@@ -376,6 +376,29 @@ update_nginx_http2_config() {
     fi
 }
 
+ensure_nginx_upload_limit() {
+    local conf="$1"
+    local tmp line
+    [[ -f "$conf" ]] || return 0
+    tmp=$(mktemp "${conf}.upload-limit.XXXXXX")
+    awk -v domain="$DOMAIN" -v limit="$MAX_UPLOAD_SIZE" '
+        {
+            line = $0
+            sub(/^[[:space:]]*/, "", line)
+            if (line ~ /^client_max_body_size[[:space:]]/) {
+                next
+            }
+            print
+            if (line == "server_name " domain ";") {
+                print "    client_max_body_size " limit ";"
+            }
+        }
+    ' "$conf" > "$tmp"
+    chmod --reference="$conf" "$tmp"
+    chown --reference="$conf" "$tmp"
+    mv -f "$tmp" "$conf"
+}
+
 # ════════════════════════════════════════
 #  ПРОВЕРКА СИСТЕМЫ
 # ════════════════════════════════════════
@@ -395,8 +418,8 @@ check_system() {
     case "$DISTRO" in
         ubuntu)
             case "$VERSION" in
-                20|22|24) log_ok "ОС: Ubuntu $VERSION ($ARCHITECTURE)" ;;
-                *) log_error "Непроверенная Ubuntu $VERSION. Поддерживаются 20.04, 22.04 и 24.04." ;;
+                20|22|24|26) log_ok "ОС: Ubuntu $VERSION ($ARCHITECTURE)" ;;
+                *) log_error "Непроверенная Ubuntu $VERSION. Поддерживаются 20.04, 22.04, 24.04 и 26.04." ;;
             esac
             ;;
         debian)
@@ -422,12 +445,18 @@ offer_swap_for_small_server() {
         log_warn "Файл /swapfile уже существует, но не активен; автоматическая настройка пропущена"
     fi
     log_warn "На сервере меньше 4 ГБ RAM и нет swap"
-    echo -ne "  Создать swap-файл 2 ГБ? [Y/n]: "
-    local swap_choice
-    read -r swap_choice
-    if [[ -n "$swap_choice" && ! "$swap_choice" =~ ^[YyДд]$ ]]; then
-        log_warn "Swap не создан"
-        return
+    if [[ "$NON_INTERACTIVE" == "true" ]]; then
+        [[ "$ASSUME_YES" == "true" ]] \
+            || log_error "Создание swap-файла 2 ГБ требует --yes в non-interactive режиме"
+        log_ok "Non-interactive режим: создаётся swap-файл 2 ГБ"
+    else
+        echo -ne "  Создать swap-файл 2 ГБ? [Y/n]: "
+        local swap_choice
+        read -r swap_choice
+        if [[ -n "$swap_choice" && ! "$swap_choice" =~ ^[YyДд]$ ]]; then
+            log_warn "Swap не создан"
+            return
+        fi
     fi
     if ! fallocate -l 2G /swapfile 2>/dev/null; then
         dd if=/dev/zero of=/swapfile bs=1M count=2048 status=none
@@ -670,7 +699,7 @@ load_env() {
         ADMIN_EMAIL="${ADMIN_EMAIL:-admin@$DOMAIN}"
         MAS_DB_PASSWORD="${MAS_DB_PASSWORD:-${DB_PASSWORD:-}}"
         REGISTRATION_MODE="${REGISTRATION_MODE:-closed}"
-        FEDERATION_MODE="${FEDERATION_MODE:-restricted}"
+        FEDERATION_MODE="${FEDERATION_MODE:-public}"
         MAX_UPLOAD_SIZE="${MAX_UPLOAD_SIZE:-2048M}"
         REMOTE_MEDIA_LIFETIME="${REMOTE_MEDIA_LIFETIME:-14d}"
         PRESENCE_ENABLED="${PRESENCE_ENABLED:-false}"
@@ -715,7 +744,7 @@ save_env() {
         printf 'PROXY_ENABLED=%q\n' "${PROXY_ENABLED:-false}"
         printf 'CONTAINER_PROXY_URL=%q\n' "${CONTAINER_PROXY_URL:-}"
         printf 'REGISTRATION_MODE=%q\n' "${REGISTRATION_MODE:-closed}"
-        printf 'FEDERATION_MODE=%q\n' "${FEDERATION_MODE:-restricted}"
+        printf 'FEDERATION_MODE=%q\n' "${FEDERATION_MODE:-public}"
         printf 'MAX_UPLOAD_SIZE=%q\n' "${MAX_UPLOAD_SIZE:-2048M}"
         printf 'REMOTE_MEDIA_LIFETIME=%q\n' "${REMOTE_MEDIA_LIFETIME:-14d}"
         printf 'PRESENCE_ENABLED=%q\n' "${PRESENCE_ENABLED:-false}"
@@ -813,6 +842,7 @@ EOF
     container_name: matrix-coturn
     restart: unless-stopped
     network_mode: host
+    command: ["-c", "/etc/coturn/turnserver.conf", "--log-file=stdout"]
     volumes:
       - ./data/coturn/turnserver.conf:/etc/coturn/turnserver.conf:ro
       - ./data/coturn/tls:/etc/coturn/tls:ro
@@ -960,7 +990,7 @@ EOF
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:
-      test: ["CMD-SHELL", "wget -q --tries=1 http://localhost:80/v1/health -O - | grep -q true"]
+      test: ["CMD-SHELL", "unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy; wget -q --tries=1 http://127.0.0.1:80/v1/health -O - | grep -q true"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -1018,6 +1048,27 @@ media_store_path: /data/media_store
 max_upload_size: $MAX_UPLOAD_SIZE
 EOF
 
+    # Synapse has a dedicated federation HTTP agent.  Writing the proxy into
+    # homeserver.yaml makes its CONNECT path deterministic instead of relying
+    # only on inherited container environment variables.
+    if [[ "${PROXY_ENABLED:-false}" == "true" && -n "${CONTAINER_PROXY_URL:-}" ]]; then
+        cat >> "$HOMESERVER_FILE" <<EOF
+
+http_proxy: "$CONTAINER_PROXY_URL"
+https_proxy: "$CONTAINER_PROXY_URL"
+no_proxy_hosts:
+  - "localhost"
+  - "127.0.0.1"
+  - "postgres"
+  - "mas"
+  - "mas-db"
+  - "ntfy"
+  - "$DOMAIN"
+  - "$SERVER_NAME"
+  - "172.16.0.0/12"
+EOF
+    fi
+
 cat >> "$HOMESERVER_FILE" <<EOF
 media_retention:
   local_media_lifetime: $LOCAL_MEDIA_LIFETIME
@@ -1054,10 +1105,10 @@ presence:
   enabled: $PRESENCE_ENABLED
 
 limit_remote_rooms:
-  enabled: true
+  enabled: false
   complexity: 15.0
   complexity_error: "Этот сервер не может подключаться к настолько большой или сложной комнате."
-  admins_can_join: false
+  admins_can_join: true
 
 registration_shared_secret: "$REG_SHARED_SECRET"
 report_stats: false
@@ -1157,6 +1208,74 @@ EOF
 # ════════════════════════════════════════
 #  УСТАНОВКА MATRIX (пункт 1)
 # ════════════════════════════════════════
+ensure_initial_admin() {
+    log_step "Создание администратора"
+    if [[ "$NON_INTERACTIVE" == "true" ]]; then
+        if [[ -z "${ADMIN_USER:-}" || -z "${ADMIN_PASSWORD_FILE:-}" ]]; then
+            log_warn "Администратор не создан: задайте ADMIN_USER и ADMIN_PASSWORD_FILE"
+            return
+        fi
+        [[ "$ADMIN_USER" =~ ^[A-Za-z0-9._=-]{1,255}$ ]] \
+            || log_error "Некорректный ADMIN_USER"
+        [[ -f "$ADMIN_PASSWORD_FILE" ]] \
+            || log_error "ADMIN_PASSWORD_FILE не найден: $ADMIN_PASSWORD_FILE"
+
+        local matrix_user existing_user
+        matrix_user="@${ADMIN_USER}:${SERVER_NAME}"
+        existing_user=$(docker compose exec -T postgres psql -U synapse -d synapse \
+            -tAc "SELECT 1 FROM users WHERE name = '$matrix_user' LIMIT 1" 2>/dev/null \
+            | tr -d '[:space:]')
+        if [[ "$existing_user" == "1" ]]; then
+            log_ok "Администратор $matrix_user уже существует"
+            return
+        fi
+
+        local admin_password
+        admin_password=$(<"$ADMIN_PASSWORD_FILE")
+        [[ ${#admin_password} -ge 12 ]] \
+            || log_error "Пароль администратора должен содержать минимум 12 символов"
+        docker compose exec -T synapse register_new_matrix_user \
+            http://localhost:8008 -c /data/homeserver.yaml --admin \
+            --user "$ADMIN_USER" --password "$admin_password"
+        unset admin_password
+        log_ok "Администратор $matrix_user создан"
+    else
+        echo ""
+        echo -e "  ${DIM}Введите данные для первого аккаунта:${NC}"
+        echo ""
+        docker compose exec synapse register_new_matrix_user \
+            http://localhost:8008 -c /data/homeserver.yaml --admin
+    fi
+}
+
+ensure_coturn_permissions() {
+    local coturn_dir="$MATRIX_DIR/data/coturn"
+    local tls_dir="$coturn_dir/tls"
+
+    [[ -d "$coturn_dir" ]] || return 0
+    # The pinned Coturn image drops privileges to nobody:nogroup (65534).
+    # Grant that group read-only access without making the TURN secret or TLS
+    # private key world-readable.
+    chown root:65534 "$coturn_dir"
+    chmod 0750 "$coturn_dir"
+    if [[ -f "$coturn_dir/turnserver.conf" ]]; then
+        chown root:65534 "$coturn_dir/turnserver.conf"
+        chmod 0640 "$coturn_dir/turnserver.conf"
+    fi
+    if [[ -d "$tls_dir" ]]; then
+        chown root:65534 "$tls_dir"
+        chmod 0750 "$tls_dir"
+    fi
+    if [[ -f "$tls_dir/turn_server_cert.pem" ]]; then
+        chown root:65534 "$tls_dir/turn_server_cert.pem"
+        chmod 0640 "$tls_dir/turn_server_cert.pem"
+    fi
+    if [[ -f "$tls_dir/turn_server_pkey.pem" ]]; then
+        chown root:65534 "$tls_dir/turn_server_pkey.pem"
+        chmod 0640 "$tls_dir/turn_server_pkey.pem"
+    fi
+}
+
 install_matrix() {
     log_step "Установка Matrix (базовая)"
 
@@ -1169,7 +1288,9 @@ install_matrix() {
         generate_compose "$HAS_MAS" "$HAS_LIVEKIT" "$HAS_KETESA" "$HAS_ELEMENT_ADMIN" "$HAS_NTFY"
         generate_homeserver "$HAS_MAS" "$HAS_LIVEKIT"
         configure_well_known "$HAS_LIVEKIT" "$HAS_MAS"   # исправлено
+        ensure_coturn_permissions
         update_nginx_http2_config "/etc/nginx/sites-available/matrix-${DOMAIN}.conf"
+        ensure_nginx_upload_limit "/etc/nginx/sites-available/matrix-${DOMAIN}.conf"
         if [[ "$HAS_MAS" == "true" ]]; then
             update_nginx_http2_config "/etc/nginx/sites-available/mas-${MAS_DOMAIN}.conf"
         fi
@@ -1183,6 +1304,9 @@ install_matrix() {
         run_spinner "Перезапуск Synapse с актуальной конфигурацией" \
             docker compose restart synapse
         wait_for_url "https://$DOMAIN/_matrix/client/versions" "Публичный Matrix API"
+        if [[ "$NON_INTERACTIVE" == "true" ]]; then
+            ensure_initial_admin
+        fi
         log_ok "Matrix уже установлен; конфигурация проверена без смены секретов"
         return
     fi
@@ -1220,7 +1344,7 @@ install_matrix() {
     fi
 
     # Безопасные defaults можно переопределить config-файлом.
-    FEDERATION_MODE="${FEDERATION_MODE:-restricted}"
+    FEDERATION_MODE="${FEDERATION_MODE:-public}"
     MAX_UPLOAD_SIZE="${MAX_UPLOAD_SIZE:-2048M}"
     REMOTE_MEDIA_LIFETIME="${REMOTE_MEDIA_LIFETIME:-14d}"
     PRESENCE_ENABLED="${PRESENCE_ENABLED:-false}"
@@ -1320,8 +1444,7 @@ EOF
     # Копирование сертификатов для Coturn
     cp /etc/letsencrypt/live/"$DOMAIN"/fullchain.pem data/coturn/tls/turn_server_cert.pem
     cp /etc/letsencrypt/live/"$DOMAIN"/privkey.pem   data/coturn/tls/turn_server_pkey.pem
-    chmod 644 data/coturn/tls/turn_server_cert.pem
-    chmod 600 data/coturn/tls/turn_server_pkey.pem
+    ensure_coturn_permissions
     install_certbot_deploy_hook
     log_ok "Сертификаты скопированы для Coturn"
 
@@ -1344,6 +1467,8 @@ server {
     listen [::]:443 ssl${NGINX_HTTP2_LISTEN};
 $NGINX_HTTP2_DIRECTIVE
     server_name $DOMAIN;
+
+    client_max_body_size $MAX_UPLOAD_SIZE;
 
     include /etc/nginx/snippets/matrix-${DOMAIN}-*.conf;
 
@@ -1374,7 +1499,7 @@ EOF
     rm -f /etc/nginx/sites-enabled/default
     ln -sf "$NGINX_CONF" /etc/nginx/sites-enabled/
     nginx -t >/dev/null 2>&1 || log_error "Ошибка конфигурации Nginx"
-    systemctl start nginx
+    systemctl reload-or-restart nginx
     log_ok "Nginx запущен"
 
     # UFW
@@ -1402,29 +1527,7 @@ EOF
     wait_for_url "https://$DOMAIN/_matrix/client/versions" "Публичный Matrix API"
 
     # Создание администратора
-    log_step "Создание администратора"
-    if [[ "$NON_INTERACTIVE" == "true" ]]; then
-        if [[ -n "${ADMIN_USER:-}" && -n "${ADMIN_PASSWORD_FILE:-}" ]]; then
-            [[ "$ADMIN_USER" =~ ^[A-Za-z0-9._=-]{1,255}$ ]] \
-                || log_error "Некорректный ADMIN_USER"
-            [[ -f "$ADMIN_PASSWORD_FILE" ]] \
-                || log_error "ADMIN_PASSWORD_FILE не найден: $ADMIN_PASSWORD_FILE"
-            ADMIN_PASSWORD=$(<"$ADMIN_PASSWORD_FILE")
-            [[ ${#ADMIN_PASSWORD} -ge 12 ]] || log_error "Пароль администратора должен содержать минимум 12 символов"
-            docker compose exec -T synapse register_new_matrix_user \
-                http://localhost:8008 -c /data/homeserver.yaml --admin \
-                --user "$ADMIN_USER" --password "$ADMIN_PASSWORD"
-            unset ADMIN_PASSWORD
-        else
-            log_warn "Администратор не создан: задайте ADMIN_USER и ADMIN_PASSWORD_FILE"
-        fi
-    else
-        echo ""
-        echo -e "  ${DIM}Введите данные для первого аккаунта:${NC}"
-        echo ""
-        docker compose exec synapse register_new_matrix_user \
-            http://localhost:8008 -c /data/homeserver.yaml --admin
-    fi
+    ensure_initial_admin
 
     # Сохранение учётных данных
     CREDS_FILE="$MATRIX_DIR/credentials.txt"
@@ -1751,6 +1854,10 @@ EOF
 
         docker compose stop synapse >/dev/null 2>&1 || true
         generate_homeserver true false
+        # generate_homeserver restores the Synapse-only 0640 mode.  syn2mas
+        # uses a different unprivileged UID, so make the bind-mounted file
+        # readable again immediately before the migration container starts.
+        chmod 0644 "$HOMESERVER_FILE"
 
         set +e
         docker compose run --rm --no-deps mas \
@@ -1764,6 +1871,7 @@ EOF
             tail -50 "$RUNTIME_DIR/syn2mas-migrate.log"
             cp "$BACKUP_DIR/homeserver.yaml" "$HOMESERVER_FILE"
             chown 991:991 "$HOMESERVER_FILE"
+            chmod 0640 "$HOMESERVER_FILE"
             docker compose up -d postgres synapse coturn >/dev/null 2>&1 || true
             log_error "Миграция syn2mas завершилась ошибкой; конфигурация Synapse восстановлена"
         fi
@@ -1884,9 +1992,10 @@ install_livekit() {
 port: 7880
 rtc:
   tcp_port: 7881
-  port_range_start: 50000
-  port_range_end: 50100
-  use_external_ip: true
+  # Single-port UDP mux avoids lossy random high-port routing and simplifies ICE.
+  # 7882 is LiveKit's standard UDP mux port and works better than UDP/443 on some carriers.
+  udp_port: 7882
+  use_external_ip: false
   node_ip: $EXTERNAL_IP
 keys:
   $LIVEKIT_KEY: $LIVEKIT_SECRET
@@ -1942,13 +2051,22 @@ EOF
 
     # Открываем порты для LiveKit
     log_step "Открытие портов для LiveKit"
+    cat > /etc/sysctl.d/99-matrix-livekit.conf <<'EOF'
+net.core.rmem_max=16777216
+net.core.wmem_max=16777216
+net.core.netdev_max_backlog=5000
+EOF
+    sysctl --system >/dev/null
     for old_rule in "8008/tcp" "8448/tcp" "7880/tcp"; do
         ufw --force delete allow "$old_rule" >/dev/null 2>&1 || true
     done
-    for rule in "7881/tcp" "50000:50100/udp"; do
+    for old_rule in "443/udp" "50000:50100/udp"; do
+        ufw --force delete allow "$old_rule" >/dev/null 2>&1 || true
+    done
+    for rule in "7881/tcp" "7882/udp"; do
         ufw allow "$rule" >/dev/null 2>&1
     done
-    log_ok "Открыты медиапорты 7881/tcp и 50000-50100/udp"
+    log_ok "Открыты медиапорты 7881/tcp и 7882/udp; UDP-буферы увеличены"
 
     # Перегенерируем compose и homeserver с включенным LiveKit
     cd "$MATRIX_DIR"
@@ -2308,7 +2426,13 @@ install_element_admin() {
     ensure_mas_admin_api
     save_env
     cd "$MATRIX_DIR"
-    regenerate_stack
+    # The installation marker is deliberately written only after the service
+    # answers.  Therefore component auto-detection cannot see Element Admin on
+    # its first run; render this one component explicitly for the initial
+    # compose-up while preserving every already installed optional service.
+    generate_compose "$HAS_MAS" "$HAS_LIVEKIT" "$HAS_KETESA" true "$HAS_NTFY"
+    generate_homeserver "$HAS_MAS" "$HAS_LIVEKIT"
+    configure_well_known "$HAS_LIVEKIT" "$HAS_MAS"
     docker compose config --quiet || log_error "Ошибка docker-compose после добавления Element Admin"
     write_proxy_vhost "element-admin" "$ELEMENT_ADMIN_DOMAIN" 8084 false
     run_spinner "Запуск Element Admin и MAS" docker compose up -d mas element-admin
@@ -2324,6 +2448,7 @@ install_ntfy() {
     require_matrix
     local ntfy_new="false"
     local ntfy_password=""
+    local ntfy_user_list=""
     if [[ -n "${NTFY_DOMAIN:-}" && -f "$MATRIX_DIR/data/ntfy/server.yml" ]]; then
         log_warn "ntfy уже настроен; проверяю и восстанавливаю сервис"
     else
@@ -2362,8 +2487,8 @@ EOF
     write_proxy_vhost "ntfy" "$NTFY_DOMAIN" 8090 true
     run_spinner "Запуск ntfy" docker compose up -d ntfy
     if [[ "$ntfy_new" == "false" ]]; then
-        if ! docker compose exec -T ntfy ntfy user list 2>/dev/null \
-            | grep -Fq "$NTFY_ADMIN_USER"; then
+        ntfy_user_list=$(docker compose exec -T ntfy ntfy user list 2>/dev/null || true)
+        if ! grep -Fq "$NTFY_ADMIN_USER" <<< "$ntfy_user_list"; then
             log_warn "Сохранённый пользователь ntfy не найден; будет создан новый пароль"
             ntfy_password=$(generate_secret 24)
             ntfy_new="true"
@@ -2666,9 +2791,11 @@ uninstall_matrix() {
     find /etc/nginx/snippets -maxdepth 1 -type f -name "matrix-${DOMAIN}-*.conf" -delete 2>/dev/null || true
     nginx -t >/dev/null 2>&1 && systemctl reload nginx >/dev/null 2>&1 || true
     for pattern in "3478/tcp" "3478/udp" "5349/tcp" "5349/udp" \
-        "49152:49252/udp" "7881/tcp" "50000:50100/udp"; do
+        "49152:49252/udp" "7881/tcp" "7882/udp" "443/udp" "50000:50100/udp"; do
         ufw --force delete allow "$pattern" >/dev/null 2>&1 || true
     done
+    rm -f /etc/sysctl.d/99-matrix-livekit.conf
+    sysctl --system >/dev/null 2>&1 || true
 
     if [[ "$mode" == "purge" ]]; then
         [[ "$MATRIX_DIR" == "/root/matrix-server" ]] \
@@ -3006,6 +3133,23 @@ EOF
     curl --fail --silent --show-error --max-time 20 \
         --proxy http://127.0.0.1:10809 https://api.ipify.org >/dev/null \
         || log_error "Xray запущен, но тестовый HTTP-запрос через него не прошёл"
+    local matrix_org_federation_status
+    matrix_org_federation_status=$(curl --silent --show-error --max-time 25 \
+        --proxy http://127.0.0.1:10809 \
+        --output /dev/null --write-out '%{http_code}' \
+        'https://matrix-federation.matrix.org/_matrix/federation/v1/query/directory?room_alias=%23matrix%3Amatrix.org' \
+        || true)
+    case "$matrix_org_federation_status" in
+        401)
+            log_ok "Выходной IP прокси принимается федерацией matrix.org"
+            ;;
+        429)
+            log_warn "matrix.org отклоняет выходной IP прокси (HTTP 429); поиск, профили и комнаты matrix.org не заработают, пока не будет заменён VLESS-выход"
+            ;;
+        *)
+            log_warn "Не удалось подтвердить доступ к федерации matrix.org через прокси (HTTP ${matrix_org_federation_status:-000})"
+            ;;
+    esac
     log_ok "Xray настроен; Docker и контейнеры используют HTTP-прокси 10809"
 }
 
@@ -3153,7 +3297,7 @@ dry_run_install() {
     RETENTION_ENABLED="${RETENTION_ENABLED:-true}"
     RETENTION_DEFAULT_MIN_LIFETIME="${RETENTION_DEFAULT_MIN_LIFETIME:-1d}"
     RETENTION_DEFAULT_MAX_LIFETIME="${RETENTION_DEFAULT_MAX_LIFETIME:-365d}"
-    FEDERATION_MODE="${FEDERATION_MODE:-restricted}"
+    FEDERATION_MODE="${FEDERATION_MODE:-public}"
     CONTAINER_PROXY_URL="${CONTAINER_PROXY_URL:-}"
     mkdir -p "$MATRIX_DIR/data/synapse"
     : > "$FEDERATION_FILE"
