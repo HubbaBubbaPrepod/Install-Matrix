@@ -93,6 +93,7 @@ The CI matrix renders and validates every configuration on the following userspa
 | Ubuntu | 20.04 | ✅ | Manual E2E |
 | Ubuntu | 22.04 | ✅ | Manual E2E |
 | Ubuntu | 24.04 | ✅ | Manual E2E |
+| Ubuntu | 26.04 | ✅ | Manual E2E |
 | Debian | 11 | ✅ | Manual E2E |
 | Debian | 12 | ✅ | Manual E2E |
 | Debian | 13 | ✅ | Manual E2E |

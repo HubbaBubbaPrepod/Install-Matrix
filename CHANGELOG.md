@@ -4,7 +4,7 @@
 
 All notable changes are documented here. The project follows Semantic Versioning.
 
-## [4.1.0] - 2026-08-20
+## [4.1.0] - 2026-08-22
 
 ### Added
 
@@ -24,6 +24,19 @@ All notable changes are documented here. The project follows Semantic Versioning
 - secrets are no longer printed in the completion banner;
 - Xray installer is pinned to an immutable commit and verified by SHA256;
 - geo databases use an explicit release and verified SHA256 rather than `latest`.
+- federation is public by default and large remote rooms are no longer rejected by the complexity limit;
+- Synapse federation traffic uses the configured Xray proxy explicitly and validates matrix.org reachability;
+- Nginx applies the configured upload limit, Coturn receives readable TLS/config permissions, and optional-service first installs are idempotent;
+- LiveKit exposes both TCP and single-port UDP media transports with tuned host buffers;
+- Ubuntu 26.04 is included in the supported release matrix.
+
+### Fixed
+
+- remote Matrix profiles, aliases and large-room joins failing behind restricted federation or an ineffective container proxy;
+- file uploads rejected by Nginx before reaching Synapse;
+- Coturn startup failures caused by unreadable mounted secrets and an ambiguous container command;
+- ntfy health checks inheriting the outbound proxy and Element Admin being omitted during its first compose render;
+- repeated non-interactive installs skipping initial administrator creation.
 
 ### Security
 

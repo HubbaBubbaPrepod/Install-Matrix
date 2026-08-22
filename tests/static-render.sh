@@ -44,6 +44,7 @@ ELEMENT_ADMIN_DOMAIN="element-admin.example.com"
 NTFY_DOMAIN="ntfy.example.com"
 NTFY_ADMIN_USER="admin"
 CONTAINER_PROXY_URL="http://host.docker.internal:10809"
+PROXY_ENABLED="true"
 REGISTRATION_MODE="closed"
 
 set_mas_registration_flags
@@ -102,10 +103,21 @@ for compose_file in root.glob("render-*-compose.yml"):
         if mask & (1 << bit):
             expected |= services
     assert set(compose["services"]) == expected, compose_file
+    assert compose["services"]["coturn"]["command"] == [
+        "-c", "/etc/coturn/turnserver.conf", "--log-file=stdout",
+    ]
     assert homeserver["server_name"] == "example.com"
     assert homeserver["public_baseurl"] == "https://matrix.example.com/"
+    assert homeserver["http_proxy"] == "http://host.docker.internal:10809"
+    assert homeserver["https_proxy"] == "http://host.docker.internal:10809"
+    assert "postgres" in homeserver["no_proxy_hosts"]
+    assert homeserver["limit_remote_rooms"]["enabled"] is False
+    assert homeserver["limit_remote_rooms"]["admins_can_join"] is True
     assert "federation_domain_whitelist" not in homeserver
     assert homeserver["enable_registration"] is False
+    if mask & 16:
+        healthcheck = compose["services"]["ntfy"]["healthcheck"]["test"]
+        assert "unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy" in healthcheck[1]
 PY
 
 # Registration modes remain intentionally supported.
