@@ -41,6 +41,9 @@ jobs:
           - oci.element.io/element-admin:0.1.12@sha256:01ecadf363e5729dcd6e3606389cfbd08a3171cf8bf5efc68e54290112048f7d
           - binwiederhier/ntfy:v2.28.0@sha256:6ef4b819f722fccdc036af611c4774cfdc2de821ab74fdd48bbf4c9d6f8973da
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
       - name: Scan ${{ matrix.image }}
         env:
           TARGET_IMAGE: ${{ matrix.image }}
