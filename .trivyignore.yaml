@@ -1,0 +1,16 @@
+# Time-bounded, binary-scoped VEX exceptions for upstream images. The affected
+# code paths are not reachable in these binaries: gosu only changes UID/GID and
+# does not use crypto/tls; LiveKit and lk-jwt-service do not expose an SSH
+# server or enforce SSH source-address restrictions. Remove these entries as
+# soon as upstream images are rebuilt with the fixed Go dependencies.
+vulnerabilities:
+  - id: CVE-2025-68121
+    paths:
+      - "usr/local/bin/gosu"
+      - "usr/sbin/gosu"
+    expired_at: 2026-10-15
+  - id: CVE-2026-56854
+    paths:
+      - "livekit-server"
+      - "lk-jwt-service"
+    expired_at: 2026-10-15

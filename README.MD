@@ -49,7 +49,7 @@
 ### Рекомендуется: релиз с проверкой контрольной суммы
 
 ```bash
-VERSION=v4.1.0
+VERSION=v4.1.1
 curl -fLO "https://github.com/HubbaBubbaPrepod/Install-Matrix/releases/download/${VERSION}/install-matrix.sh"
 curl -fLO "https://github.com/HubbaBubbaPrepod/Install-Matrix/releases/download/${VERSION}/SHA256SUMS"
 sha256sum --check --ignore-missing SHA256SUMS
@@ -63,7 +63,7 @@ sudo ./install-matrix.sh
 ### Загрузка и запуск одной командой
 
 ```bash
-VERSION=v4.1.0; curl -fsSLo install-matrix.sh "https://github.com/HubbaBubbaPrepod/Install-Matrix/releases/download/${VERSION}/install-matrix.sh" && chmod +x install-matrix.sh && sudo ./install-matrix.sh
+VERSION=v4.1.1; curl -fsSLo install-matrix.sh "https://github.com/HubbaBubbaPrepod/Install-Matrix/releases/download/${VERSION}/install-matrix.sh" && chmod +x install-matrix.sh && sudo ./install-matrix.sh
 ```
 
 Установка размещается в `/root/matrix-server`.
@@ -109,6 +109,8 @@ CI создаёт и проверяет конфигурации в следую
 | `open` | Регистрация без токена с обязательным подтверждением риска |
 
 Открытая регистрация намеренно доступна, но может привлечь ботов и злоупотребления. В non-interactive режиме одновременно требуются `REGISTRATION_MODE=open` и `--allow-open-registration`.
+
+После миграции `syn2mas` установщик отдельным шагом создаёт администратора MAS или повышает уже перенесённого пользователя. Для него выпускается compatibility token с правами администратора Synapse. В режиме `token` дополнительно создаётся одноразовый регистрационный токен. Данные показываются после установки MAS и сохраняются с правами `0600` в `/root/matrix-server/credentials.txt`.
 
 ## CLI и автоматизация
 
@@ -165,7 +167,7 @@ HTTP-порты приложений привязаны только к `127.0.0
 ✓ MAS / LiveKit / ntfy — если включены
 ```
 
-Учётные данные записываются с правами `0600` в `/root/matrix-server/credentials.txt`. Секреты не выводятся в финальном баннере.
+Учётные данные записываются с правами `0600` в `/root/matrix-server/credentials.txt`. Базовая установка не повторяет секреты в финальном баннере; после установки MAS данные нового администратора и токены показываются один раз и остаются в защищённом файле.
 
 ## Документация
 

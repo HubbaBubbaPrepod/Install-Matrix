@@ -4,7 +4,7 @@ set -Eeuo pipefail
 PROJECT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 INSTALLER="$PROJECT_DIR/install-matrix.sh"
 
-[[ "$(bash "$INSTALLER" --version)" == "Install-Matrix v4.1.0" ]]
+[[ "$(bash "$INSTALLER" --version)" == "Install-Matrix v4.1.1" ]]
 bash "$INSTALLER" --help | grep -Fq -- "--non-interactive"
 bash "$INSTALLER" --help | grep -Fq -- "restore [DIR|latest]"
 bash "$INSTALLER" --help | grep -Fq -- "verify-backup [DIR|latest]"

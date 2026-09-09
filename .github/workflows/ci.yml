@@ -26,6 +26,8 @@ jobs:
         run: bash tests/cli.sh
       - name: Backup lifecycle
         run: bash tests/lifecycle.sh
+      - name: MAS administrator provisioning
+        run: bash tests/mas-admin.sh
       - name: Documentation and assets
         run: bash tests/docs.sh
       - name: Supply-chain policy

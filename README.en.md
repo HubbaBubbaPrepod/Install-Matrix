@@ -49,7 +49,7 @@ This project focuses on the straightforward single-VPS path. If you need a highl
 ### Recommended: release asset with checksum
 
 ```bash
-VERSION=v4.1.0
+VERSION=v4.1.1
 curl -fLO "https://github.com/HubbaBubbaPrepod/Install-Matrix/releases/download/${VERSION}/install-matrix.sh"
 curl -fLO "https://github.com/HubbaBubbaPrepod/Install-Matrix/releases/download/${VERSION}/SHA256SUMS"
 sha256sum --check --ignore-missing SHA256SUMS
@@ -63,7 +63,7 @@ Do not execute an unreviewed mutable branch directly as root. Every tagged relea
 ### One-line download and launch
 
 ```bash
-VERSION=v4.1.0; curl -fsSLo install-matrix.sh "https://github.com/HubbaBubbaPrepod/Install-Matrix/releases/download/${VERSION}/install-matrix.sh" && chmod +x install-matrix.sh && sudo ./install-matrix.sh
+VERSION=v4.1.1; curl -fsSLo install-matrix.sh "https://github.com/HubbaBubbaPrepod/Install-Matrix/releases/download/${VERSION}/install-matrix.sh" && chmod +x install-matrix.sh && sudo ./install-matrix.sh
 ```
 
 The installer writes the deployment to `/root/matrix-server`.
@@ -109,6 +109,8 @@ Supported CPU architecture is currently `amd64`. Other architectures may work wh
 | `open` | Registration without a token; explicit risk confirmation is required |
 
 Open registration is intentionally available, but it can attract automated account creation and abuse. Non-interactive use requires both `REGISTRATION_MODE=open` and `--allow-open-registration`.
+
+After `syn2mas` migration, the installer runs a dedicated step that creates a MAS administrator or promotes the migrated user. It issues a compatibility token with Synapse administrator privileges and, in `token` mode, a one-use registration token. The values are displayed after MAS setup and stored with mode `0600` in `/root/matrix-server/credentials.txt`.
 
 ## CLI and automation
 
@@ -165,7 +167,7 @@ The installer finishes with a unified health report:
 ✓ MAS / LiveKit / ntfy (when enabled)
 ```
 
-Credentials are written with mode `0600` to `/root/matrix-server/credentials.txt`. Secrets are not repeated in the final terminal banner.
+Credentials are written with mode `0600` to `/root/matrix-server/credentials.txt`. The base installer does not repeat secrets in its completion banner; MAS administrator credentials and tokens are displayed once after MAS setup and remain in the protected file.
 
 ## Documentation
 

@@ -38,6 +38,11 @@ Include the installer version, affected component, reproduction steps, impact an
 - default container images are pinned by both version tag and OCI digest;
 - weekly workflows verify pinned downloads and scan the repository with Trivy, Gitleaks and zizmor.
 
+Image-scan exceptions are stored in `.trivyignore.yaml`. Every exception must
+be restricted to the affected binary path, document why the vulnerable code is
+not reachable, and include a short expiration date. Expired entries fail the
+scan and must be removed or reviewed against a rebuilt upstream image.
+
 ## Host hardening
 
 Use SSH keys, restrict administrative IPs, keep the host patched, encrypt offsite backups and monitor disk space. The installer preserves the SSH port detected by `sshd -T` before enabling UFW.
