@@ -32,19 +32,24 @@ jobs:
       matrix:
         image:
           - postgres:16.15-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685
-          - ghcr.io/element-hq/synapse:v1.158.0@sha256:5f868df1f5772907c6dbe973a9b69ab530a5d6bb317c011a3788f7ad78eb1292
+          - ghcr.io/element-hq/synapse:v1.160.0@sha256:78de1d10bef02e375f861d1cc99f8bedd9381d4f9083ea8b2c22a053477b205f
           - coturn/coturn:4.17.2-r0@sha256:aa68aab64a3b929d57fc2924c98ea447bf996cf8dade2508e7b71eaf23f1f14e
-          - ghcr.io/element-hq/matrix-authentication-service:1.22.0@sha256:8cb319ec41706adc1ed8b5b63e1de2f067073cc33a304686226f658f5e83c8b3
-          - livekit/livekit-server:v1.13.5@sha256:3497163e15c48fef6e7830c78716f9e9d5edc28abf7aa90b61c86e93bbc306b1
-          - ghcr.io/element-hq/lk-jwt-service:0.5.0@sha256:29918567e6b7cd920e2853b4cd6848ce01b79947c3d19a9f1ed5b74f0a2a88bf
+          - ghcr.io/element-hq/matrix-authentication-service:1.24.0@sha256:52c18ffcc940220a3b6aa5985b7e09d24ac27f5ed10a4d660c312e48f73ff105
+          - livekit/livekit-server:v1.13.6@sha256:e37d68f172556d02aa77968b9fc55ef481468c0315fa38e4fa6c56ce72e3a815
+          - ghcr.io/element-hq/lk-jwt-service:0.6.0@sha256:822f0c03a3bdd924da92afc2e8ec59de5dda17af42d32e71e11f269c3517abf7
           - ghcr.io/etkecc/ketesa:v1.4.0@sha256:ec8216e940f9b1490539bff8dde303846a4809b17f6c5ad31603701a3f575c3e
           - oci.element.io/element-admin:0.1.12@sha256:01ecadf363e5729dcd6e3606389cfbd08a3171cf8bf5efc68e54290112048f7d
-          - binwiederhier/ntfy:v2.27.0@sha256:f2419f405127afa868f10985c1a41449e673477cee1eb19994339a5ae8b592e7
+          - binwiederhier/ntfy:v2.28.0@sha256:6ef4b819f722fccdc036af611c4774cfdc2de821ab74fdd48bbf4c9d6f8973da
     steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
       - name: Scan ${{ matrix.image }}
         env:
           TARGET_IMAGE: ${{ matrix.image }}
         run: |
           docker run --rm \
+            -v "$PWD/.trivyignore.yaml:/etc/trivy/.trivyignore.yaml:ro" \
             aquasec/trivy:0.74.0@sha256:62b1e65e8869bc4b4c6aa4fa2b21595256c7c2f6018a9d9ad61caf87187c1969 \
-            image --ignore-unfixed --severity CRITICAL --exit-code 1 "$TARGET_IMAGE"
+            image --ignorefile /etc/trivy/.trivyignore.yaml \
+            --ignore-unfixed --severity CRITICAL --exit-code 1 "$TARGET_IMAGE"

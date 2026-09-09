@@ -4,6 +4,30 @@
 
 All notable changes are documented here. The project follows Semantic Versioning.
 
+## [4.1.1] - 2026-09-09
+
+### Added
+
+- post-MAS administrator provisioning for migrated and new users;
+- generation and protected storage of a Synapse-admin compatibility token;
+- one-use MAS registration token generation when registration mode is `token`;
+- focused tests for MAS administrator creation, token parsing and idempotency.
+
+### Changed
+
+- updated Synapse to 1.160.0, MAS to 1.24.0, LiveKit to 1.13.6,
+  lk-jwt-service to 0.6.0 and ntfy to 2.28.0 with immutable digests;
+- image scanning uses time-bounded, binary-scoped VEX exceptions for unreachable
+  Go `crypto/tls` and `x/crypto/ssh` code in upstream images.
+- Debian 11 was removed from the supported and CI-tested matrix after the end
+  of its LTS security support on 2026-08-31.
+
+### Fixed
+
+- migrated Synapse administrators not receiving MAS administrator privileges;
+- scheduled image-security jobs failing on fixed upstream releases or
+  non-reachable vulnerable code reported by whole-binary dependency scanning.
+
 ## [4.1.0] - 2026-08-22
 
 ### Added
@@ -54,5 +78,6 @@ All notable changes are documented here. The project follows Semantic Versioning
 - optional MAS, LiveKit/MatrixRTC, admin UIs, ntfy and Xray;
 - static render tests, diagnostics and database/config backups.
 
+[4.1.1]: https://github.com/HubbaBubbaPrepod/Install-Matrix/compare/v4.1.0...v4.1.1
 [4.1.0]: https://github.com/HubbaBubbaPrepod/Install-Matrix/compare/v4.0.0...v4.1.0
 [4.0.0]: https://github.com/HubbaBubbaPrepod/Install-Matrix/releases/tag/v4.0.0

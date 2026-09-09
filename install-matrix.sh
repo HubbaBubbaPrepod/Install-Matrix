@@ -1,16 +1,16 @@
 #!/bin/bash
 
 # ============================================================
-#  MATRIX SERVER INSTALLER v4.1.0
+#  MATRIX SERVER INSTALLER v4.1.1
 #  by zxchubbabubba
-#  Поддерживает: Ubuntu 20.04/22.04/24.04/26.04, Debian 11/12/13 (amd64)
+#  Поддерживает: Ubuntu 20.04/22.04/24.04/26.04, Debian 12/13 (amd64)
 #  Меню: Matrix, MAS, LiveKit, federation, admin UIs, ntfy, Xray, backup
 # ============================================================
 
 set -Ee -o pipefail
 umask 077
 
-INSTALLER_VERSION="4.1.0"
+INSTALLER_VERSION="4.1.1"
 INSTALLER_REPOSITORY="https://github.com/HubbaBubbaPrepod/Install-Matrix"
 NON_INTERACTIVE=false
 ASSUME_YES=false
@@ -50,16 +50,16 @@ HOMESERVER_FILE="$MATRIX_DIR/data/synapse/homeserver.yaml"
 FEDERATION_FILE="$MATRIX_DIR/federation-domains.txt"
 BACKUP_ROOT="$MATRIX_DIR/data/backups"
 
-# Проверенные стабильные версии на 2026-08-14. Их можно переопределить в .env.
+# Проверенные стабильные версии на 2026-09-09. Их можно переопределить в .env.
 POSTGRES_IMAGE_DEFAULT="postgres:16.15-alpine@sha256:cf78e76683b9ca8c5733cbbdce6c9262b45b6767934dd0a95e671f9a0fc20685"
-SYNAPSE_IMAGE_DEFAULT="ghcr.io/element-hq/synapse:v1.158.0@sha256:5f868df1f5772907c6dbe973a9b69ab530a5d6bb317c011a3788f7ad78eb1292"
+SYNAPSE_IMAGE_DEFAULT="ghcr.io/element-hq/synapse:v1.160.0@sha256:78de1d10bef02e375f861d1cc99f8bedd9381d4f9083ea8b2c22a053477b205f"
 COTURN_IMAGE_DEFAULT="coturn/coturn:4.17.2-r0@sha256:aa68aab64a3b929d57fc2924c98ea447bf996cf8dade2508e7b71eaf23f1f14e"
-MAS_IMAGE_DEFAULT="ghcr.io/element-hq/matrix-authentication-service:1.22.0@sha256:8cb319ec41706adc1ed8b5b63e1de2f067073cc33a304686226f658f5e83c8b3"
-LIVEKIT_IMAGE_DEFAULT="livekit/livekit-server:v1.13.5@sha256:3497163e15c48fef6e7830c78716f9e9d5edc28abf7aa90b61c86e93bbc306b1"
-LK_JWT_IMAGE_DEFAULT="ghcr.io/element-hq/lk-jwt-service:0.5.0@sha256:29918567e6b7cd920e2853b4cd6848ce01b79947c3d19a9f1ed5b74f0a2a88bf"
+MAS_IMAGE_DEFAULT="ghcr.io/element-hq/matrix-authentication-service:1.24.0@sha256:52c18ffcc940220a3b6aa5985b7e09d24ac27f5ed10a4d660c312e48f73ff105"
+LIVEKIT_IMAGE_DEFAULT="livekit/livekit-server:v1.13.6@sha256:e37d68f172556d02aa77968b9fc55ef481468c0315fa38e4fa6c56ce72e3a815"
+LK_JWT_IMAGE_DEFAULT="ghcr.io/element-hq/lk-jwt-service:0.6.0@sha256:822f0c03a3bdd924da92afc2e8ec59de5dda17af42d32e71e11f269c3517abf7"
 KETESA_IMAGE_DEFAULT="ghcr.io/etkecc/ketesa:v1.4.0@sha256:ec8216e940f9b1490539bff8dde303846a4809b17f6c5ad31603701a3f575c3e"
 ELEMENT_ADMIN_IMAGE_DEFAULT="oci.element.io/element-admin:0.1.12@sha256:01ecadf363e5729dcd6e3606389cfbd08a3171cf8bf5efc68e54290112048f7d"
-NTFY_IMAGE_DEFAULT="binwiederhier/ntfy:v2.27.0@sha256:f2419f405127afa868f10985c1a41449e673477cee1eb19994339a5ae8b592e7"
+NTFY_IMAGE_DEFAULT="binwiederhier/ntfy:v2.28.0@sha256:6ef4b819f722fccdc036af611c4774cfdc2de821ab74fdd48bbf4c9d6f8973da"
 XRAY_VERSION_DEFAULT="v26.3.27"
 # Immutable upstream revision. Update it deliberately and record the change in CHANGELOG.md.
 XRAY_INSTALL_COMMIT="e741a4f56d368afbb9e5be3361b40c4552d3710d"
@@ -424,8 +424,8 @@ check_system() {
             ;;
         debian)
             case "$VERSION" in
-                11|12|13) log_ok "ОС: Debian $VERSION ($ARCHITECTURE)" ;;
-                *) log_error "Непроверенный Debian $VERSION. Поддерживаются 11, 12 и 13." ;;
+                12|13) log_ok "ОС: Debian $VERSION ($ARCHITECTURE)" ;;
+                *) log_error "Непроверенный Debian $VERSION. Поддерживаются 12 и 13." ;;
             esac
             ;;
         *)
@@ -1248,6 +1248,141 @@ ensure_initial_admin() {
     fi
 }
 
+ensure_mas_administrator() {
+    local creds_file="$MATRIX_DIR/credentials.txt"
+    local username admin_password password_confirmation
+    local promote_output register_output token_output compatibility_token
+    local registration_output registration_token=""
+
+    if [[ -f "$creds_file" ]] \
+        && grep -Fq '# BEGIN MAS ADMIN' "$creds_file"; then
+        log_ok "Учётные данные администратора MAS уже сохранены в $creds_file"
+        return
+    fi
+
+    log_step "Создание администратора MAS"
+    if [[ "$NON_INTERACTIVE" == "true" ]]; then
+        if [[ -z "${ADMIN_USER:-}" || -z "${ADMIN_PASSWORD_FILE:-}" ]]; then
+            log_warn "Администратор MAS не создан: задайте ADMIN_USER и ADMIN_PASSWORD_FILE"
+            return
+        fi
+        username="$ADMIN_USER"
+        [[ -f "$ADMIN_PASSWORD_FILE" ]] \
+            || log_error "ADMIN_PASSWORD_FILE не найден: $ADMIN_PASSWORD_FILE"
+        admin_password=$(<"$ADMIN_PASSWORD_FILE")
+    else
+        echo ""
+        echo -e "  ${DIM}Укажите аккаунт, который станет администратором MAS.${NC}"
+        echo -e "  ${DIM}Если пользователь уже перенесён из Synapse, его права и пароль будут обновлены.${NC}"
+        echo ""
+        echo -ne "  ${CYAN}▶${NC}  Имя администратора [admin]: "
+        read -r username
+        username="${username:-admin}"
+        echo -ne "  ${CYAN}▶${NC}  Пароль администратора: "
+        read -r -s admin_password
+        echo ""
+        echo -ne "  ${CYAN}▶${NC}  Повторите пароль: "
+        read -r -s password_confirmation
+        echo ""
+        [[ "$admin_password" == "$password_confirmation" ]] \
+            || log_error "Пароли администратора MAS не совпадают"
+        unset password_confirmation
+    fi
+
+    [[ "$username" =~ ^[A-Za-z0-9._=-]{1,255}$ ]] \
+        || log_error "Некорректный ADMIN_USER"
+    [[ ${#admin_password} -ge 12 ]] \
+        || log_error "Пароль администратора должен содержать минимум 12 символов"
+    [[ "$admin_password" != *$'\n'* && "$admin_password" != *$'\r'* ]] \
+        || log_error "Пароль администратора не должен содержать перевод строки"
+
+    # syn2mas переносит пользователя, но не делает его администратором MAS.
+    # Сначала пробуем повысить перенесённую учётную запись. Если её нет,
+    # создаём новую штатным CLI MAS.
+    if promote_output=$(docker compose exec -T mas mas-cli \
+        --config /app/config/config.yaml manage promote-admin "$username" 2>&1); then
+        docker compose exec -T mas mas-cli \
+            --config /app/config/config.yaml manage set-password \
+            "$username" "$admin_password" >/dev/null 2>&1 \
+            || log_error "Не удалось обновить пароль администратора MAS"
+        log_ok "Пользователь @$username:$SERVER_NAME повышен до администратора MAS"
+    else
+        if ! register_output=$(docker compose exec -T mas mas-cli \
+            --config /app/config/config.yaml manage register-user \
+            --yes --admin --password "$admin_password" "$username" 2>&1); then
+            printf '%s\n' "$promote_output" "$register_output" | tail -20
+            unset admin_password
+            log_error "Не удалось создать администратора MAS"
+        fi
+        log_ok "Администратор @$username:$SERVER_NAME создан в MAS"
+    fi
+
+    # Compatibility token нужен для входа в административные Matrix-клиенты.
+    # CLI пишет токен в stderr через tracing, поэтому объединяем оба потока.
+    # A newly registered MAS user is provisioned in Synapse asynchronously.
+    # Retry token issuance until the worker has created the Matrix account.
+    compatibility_token=""
+    local token_attempt
+    for ((token_attempt=1; token_attempt<=30; token_attempt++)); do
+        if token_output=$(docker compose exec -T mas mas-cli \
+            --config /app/config/config.yaml manage issue-compatibility-token \
+            "$username" --yes-i-want-to-grant-synapse-admin-privileges 2>&1); then
+            compatibility_token=$(sed -n \
+                's/.*Compatibility token issued: \([^[:space:]]*\).*/\1/p' \
+                <<<"$token_output" | tail -1)
+            [[ -n "$compatibility_token" ]] && break
+        fi
+        sleep 2
+    done
+    [[ -n "$compatibility_token" ]] \
+        || { unset admin_password; log_error "MAS не вернул compatibility token"; }
+
+    if [[ "$REGISTRATION_MODE" == "token" ]]; then
+        registration_output=$(docker compose exec -T mas mas-cli \
+            --config /app/config/config.yaml manage issue-user-registration-token 2>&1) \
+            || { unset admin_password; log_error "Не удалось выпустить регистрационный токен MAS"; }
+        registration_token=$(sed -n \
+            's/.*Created user registration token: \([^[:space:]]*\).*/\1/p' \
+            <<<"$registration_output" | tail -1)
+        [[ -n "$registration_token" ]] \
+            || { unset admin_password; log_error "MAS не вернул регистрационный токен"; }
+    fi
+
+    touch "$creds_file"
+    cat >> "$creds_file" <<CREDS
+
+# BEGIN MAS ADMIN
+MAS Administrator
+=================
+Matrix ID:            @$username:$SERVER_NAME
+Username:             $username
+Password:             $admin_password
+Compatibility token:  $compatibility_token
+MAS account page:     https://$MAS_DOMAIN/account
+CREDS
+    if [[ -n "$registration_token" ]]; then
+        cat >> "$creds_file" <<CREDS
+Registration token:   $registration_token
+Registration uses:    1
+CREDS
+    fi
+    echo "# END MAS ADMIN" >> "$creds_file"
+    chmod 600 "$creds_file"
+
+    echo ""
+    echo -e "  ${BGREEN}Администратор MAS готов${NC}"
+    echo -e "  ${WHITE}Matrix ID:${NC}           ${CYAN}@$username:$SERVER_NAME${NC}"
+    echo -e "  ${WHITE}Пароль:${NC}              ${CYAN}$admin_password${NC}"
+    echo -e "  ${WHITE}Токен для входа:${NC}     ${CYAN}$compatibility_token${NC}"
+    if [[ -n "$registration_token" ]]; then
+        echo -e "  ${WHITE}Токен регистрации:${NC}   ${CYAN}$registration_token${NC} ${DIM}(одно использование)${NC}"
+    fi
+    echo -e "  ${DIM}Полные данные сохранены с правами 0600: $creds_file${NC}"
+    echo ""
+
+    unset admin_password compatibility_token registration_token
+}
+
 ensure_coturn_permissions() {
     local coturn_dir="$MATRIX_DIR/data/coturn"
     local tls_dir="$coturn_dir/tls"
@@ -1619,6 +1754,7 @@ install_mas() {
         if [[ "$HAS_LIVEKIT" == "true" ]]; then
             wait_for_url "https://$DOMAIN/lk-jwt/healthz" "MatrixRTC Authorization Service"
         fi
+        ensure_mas_administrator
         log_ok "MAS уже установлен; конфигурация проверена без смены ключей шифрования"
         return
     fi
@@ -1912,6 +2048,8 @@ MAS Secret:  $MAS_SECRET
 CREDS
     fi
     chmod 600 "$CREDS_FILE"
+
+    ensure_mas_administrator
 
     # Финальный вывод
     echo ""

@@ -22,6 +22,20 @@ while IFS= read -r image_default; do
     }
 done < <(sed -n 's/^[A-Z_]*IMAGE_DEFAULT="\([^"]*\)"$/\1/p' install-matrix.sh)
 
+mapfile -t default_images < <(
+    sed -n 's/^[A-Z_]*IMAGE_DEFAULT="\([^"]*\)"$/\1/p' install-matrix.sh | sort
+)
+mapfile -t scanned_images < <(
+    sed -n 's/^[[:space:]]*-[[:space:]]*\([^[:space:]]*@sha256:[0-9a-f]\{64\}\)$/\1/p' \
+        .github/workflows/security.yml | sort
+)
+if ! diff -u \
+    <(printf '%s\n' "${default_images[@]}") \
+    <(printf '%s\n' "${scanned_images[@]}"); then
+    echo "Default images and the security scan matrix are out of sync" >&2
+    exit 1
+fi
+
 while IFS= read -r action; do
     ref=${action##*@}
     [[ "$ref" =~ ^[0-9a-f]{40}$ ]] || {
