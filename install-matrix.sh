@@ -3,7 +3,7 @@
 # ============================================================
 #  MATRIX SERVER INSTALLER v4.1.1
 #  by zxchubbabubba
-#  Поддерживает: Ubuntu 20.04/22.04/24.04/26.04, Debian 11/12/13 (amd64)
+#  Поддерживает: Ubuntu 20.04/22.04/24.04/26.04, Debian 12/13 (amd64)
 #  Меню: Matrix, MAS, LiveKit, federation, admin UIs, ntfy, Xray, backup
 # ============================================================
 
@@ -424,8 +424,8 @@ check_system() {
             ;;
         debian)
             case "$VERSION" in
-                11|12|13) log_ok "ОС: Debian $VERSION ($ARCHITECTURE)" ;;
-                *) log_error "Непроверенный Debian $VERSION. Поддерживаются 11, 12 и 13." ;;
+                12|13) log_ok "ОС: Debian $VERSION ($ARCHITECTURE)" ;;
+                *) log_error "Непроверенный Debian $VERSION. Поддерживаются 12 и 13." ;;
             esac
             ;;
         *)

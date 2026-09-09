@@ -19,6 +19,8 @@ All notable changes are documented here. The project follows Semantic Versioning
   lk-jwt-service to 0.6.0 and ntfy to 2.28.0 with immutable digests;
 - image scanning uses time-bounded, binary-scoped VEX exceptions for unreachable
   Go `crypto/tls` and `x/crypto/ssh` code in upstream images.
+- Debian 11 was removed from the supported and CI-tested matrix after the end
+  of its LTS security support on 2026-08-31.
 
 ### Fixed
 
